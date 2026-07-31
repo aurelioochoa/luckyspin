@@ -1,0 +1,18 @@
+# Build artifacts
+gambling_game
+test_unicode
+tests/run_tests
+*.o
+*.d
+
+# Save data (now lives in $XDG_DATA_HOME, but keep legacy CWD saves out of git)
+lucky_spin_save.txt
+lucky_spin_save.txt.bak
+lucky_spin_save.txt.tmp
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
