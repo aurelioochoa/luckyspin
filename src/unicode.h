@@ -101,7 +101,8 @@ namespace Unicode {
     const std::string GLOBE      = "\xF0\x9F\x8C\x8D";  // 🌍 U+1F30D EARTH GLOBE EUROPE-AFRICA
     const std::string JAR        = "\xF0\x9F\xAB\x99";  // 🫙 U+1FAD9 JAR
     const std::string BUILDING   = "\xF0\x9F\x8F\x9B";  // 🏛 U+1F3DB CLASSICAL BUILDING
-    const std::string UP_ARROW   = "\xE2\xAC\x86\xEF\xB8\x8F";  // ⬆️ UP ARROW
+    const std::string UP_ARROW   = "\xE2\xAC\x86\xEF\xB8\x8F";  // ⬆️ U+2B06 + VS16 (emoji presentation)
+    const std::string UP_ARROW_PLAIN = "\xE2\xAC\x86";           // ⬆ U+2B06 (text presentation, 1 column)
 
     // ========================================================================
     // ASCII FALLBACKS (for terminals that don't support Unicode)

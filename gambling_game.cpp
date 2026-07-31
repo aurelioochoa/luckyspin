@@ -41,165 +41,32 @@
 #include <sys/select.h> // For select() - non-blocking input check
 #include <sstream>    // For ostringstream - string building
 #include <fstream>    // For file I/O (save/load game) - Sprint 3
+#include <stdexcept>  // For std::exception, std::invalid_argument
+
+// Project headers. These are the single source of truth for colors, symbols
+// and terminal helpers - do not redefine any of them in this file.
+#include "colors.h"          // Color::   ANSI escape codes
+#include "symbols.h"         // Symbols:: Cards:: UI::  display glyphs
+#include "utils.h"           // getch(), clearScreen(), printLine(), terminal::
+#include "core/text_width.h" // text::displayWidth() - column-accurate padding
+#include "core/money.h"      // formatMoney()
+#include "core/rng.h"        // Rng - seedable random number generator
+#include "core/save_path.h"  // savepath::resolve() - XDG save location
 
 // Using the standard namespace so we don't have to write "std::" everywhere
 // In larger projects, it's often better to use "std::" explicitly
 using namespace std;
 
 // ============================================================================
-// ANSI COLOR CODES
+// COLORS, SYMBOLS AND UI GLYPHS
 // ============================================================================
-// ANSI escape codes are special character sequences that terminals interpret
-// as commands rather than text. They start with ESC (escape character, \033)
-// followed by '[' and then the command.
-// 
-// Format: \033[<code>m
-// - \033 is the escape character (octal notation)
-// - [ starts the control sequence
-// - <code> is the color/style code
-// - m ends the sequence
+// Color::   -> src/colors.h
+// Symbols:: -> src/symbols.h (slot reel faces)
+// Cards::   -> src/symbols.h (card suits)
+// UI::      -> src/symbols.h (box drawing, arrows, icons)
 //
-// These are defined as constants using 'const' keyword, which means their
-// values cannot be changed after initialization. This is safer than #define.
-
-namespace Color {
-    // Reset - turns off all formatting
-    const string RESET   = "\033[0m";
-    
-    // Regular text colors (foreground)
-    const string RED     = "\033[31m";    // Used for losses, errors
-    const string GREEN   = "\033[32m";    // Used for wins, success
-    const string YELLOW  = "\033[33m";    // Used for warnings, gold/money
-    const string BLUE    = "\033[34m";    // Used for information
-    const string MAGENTA = "\033[35m";    // Used for special items
-    const string CYAN    = "\033[36m";    // Used for highlights
-    const string WHITE   = "\033[37m";    // Default text
-    
-    // Bold/bright versions (add intensity)
-    const string BOLD    = "\033[1m";     // Makes text bold
-    const string DIM     = "\033[2m";     // Makes text dimmer
-    
-    // Background colors
-    const string BG_RED     = "\033[41m";
-    const string BG_GREEN   = "\033[42m";
-    const string BG_YELLOW  = "\033[43m";
-    const string BG_BLUE    = "\033[44m";
-    const string BG_WHITE   = "\033[47m";
-    
-    // Additional foreground color
-    const string BLACK      = "\033[30m";
-}
-
-// ============================================================================
-// SLOT MACHINE SYMBOLS (Unicode - Sprint 6)
-// ============================================================================
-// Using Unicode symbols via escape codes for better portability.
-// UTF-8 encoding: 4-byte emoji use \xF0\x9F\xXX\xXX format
-
-namespace Symbols {
-    // Symbol characters - UTF-8 escape sequences
-    const string CHERRY  = "\xF0\x9F\x8D\x92";  // U+1F352 CHERRIES
-    const string ORANGE  = "\xF0\x9F\x8D\x8A";  // U+1F34A TANGERINE
-    const string LEMON   = "\xF0\x9F\x8D\x8B";  // U+1F34B LEMON
-    const string GRAPE   = "\xF0\x9F\x8D\x87";  // U+1F347 GRAPES
-    const string BELL    = "\xF0\x9F\x94\x94";  // U+1F514 BELL
-    const string SEVEN   = "7\xEF\xB8\x8F\xE2\x83\xA3";  // 7️⃣ KEYCAP SEVEN
-    const string DIAMOND = "\xF0\x9F\x92\x8E";  // U+1F48E GEM STONE
-    const string STAR    = "\xE2\xAD\x90";      // U+2B50 WHITE MEDIUM STAR
-    
-    // Array of all symbols for easy random selection
-    const string ALL[] = {CHERRY, ORANGE, LEMON, GRAPE, BELL, SEVEN, DIAMOND, STAR};
-    
-    // Corresponding colors for each symbol (used for background effects)
-    const string COLORS[] = {
-        Color::RED,      // Cherry - red
-        Color::YELLOW,   // Orange - yellow/orange
-        Color::YELLOW,   // Lemon - yellow
-        Color::MAGENTA,  // Grape - purple/magenta
-        Color::CYAN,     // Bell - cyan
-        Color::GREEN,    // Seven - green (lucky!)
-        Color::CYAN,     // Diamond - cyan
-        Color::YELLOW    // Star - yellow
-    };
-    
-    // Total number of different symbols
-    const int COUNT = sizeof(ALL) / sizeof(ALL[0]);
-}
-
-// ============================================================================
-// CARD SYMBOLS (Unicode - Sprint 6)
-// ============================================================================
-// Card suit symbols using UTF-8 escape codes
-
-namespace Cards {
-    // UTF-8: E2 99 XX for card suits (U+2660 block)
-    const string SPADE   = "\xE2\x99\xA0";  // U+2660 BLACK SPADE SUIT
-    const string HEART   = "\xE2\x99\xA5";  // U+2665 BLACK HEART SUIT
-    const string DIAMOND = "\xE2\x99\xA6";  // U+2666 BLACK DIAMOND SUIT
-    const string CLUB    = "\xE2\x99\xA3";  // U+2663 BLACK CLUB SUIT
-    
-    // Suit colors
-    const string SPADE_COLOR   = Color::WHITE;
-    const string HEART_COLOR   = Color::RED;
-    const string DIAMOND_COLOR = Color::RED;
-    const string CLUB_COLOR    = Color::WHITE;
-}
-
-// ============================================================================
-// UI DECORATIONS (Unicode - Sprint 6)
-// ============================================================================
-// Box drawing and UI icons using UTF-8 escape codes
-
-namespace UI {
-    // Box drawing characters (U+2500 block) - UTF-8: E2 94 XX
-    const string H_LINE    = "\xE2\x94\x80";  // U+2500 BOX DRAWINGS LIGHT HORIZONTAL
-    const string V_LINE    = "\xE2\x94\x82";  // U+2502 BOX DRAWINGS LIGHT VERTICAL
-    const string TL_CORNER = "\xE2\x94\x8C";  // U+250C BOX DRAWINGS LIGHT DOWN AND RIGHT
-    const string TR_CORNER = "\xE2\x94\x90";  // U+2510 BOX DRAWINGS LIGHT DOWN AND LEFT
-    const string BL_CORNER = "\xE2\x94\x94";  // U+2514 BOX DRAWINGS LIGHT UP AND RIGHT
-    const string BR_CORNER = "\xE2\x94\x98";  // U+2518 BOX DRAWINGS LIGHT UP AND LEFT
-    const string T_JOIN    = "\xE2\x94\xAC";  // U+252C BOX DRAWINGS LIGHT DOWN AND HORIZONTAL
-    const string B_JOIN    = "\xE2\x94\xB4";  // U+2534 BOX DRAWINGS LIGHT UP AND HORIZONTAL
-    const string L_JOIN    = "\xE2\x94\x9C";  // U+251C BOX DRAWINGS LIGHT VERTICAL AND RIGHT
-    const string R_JOIN    = "\xE2\x94\xA4";  // U+2524 BOX DRAWINGS LIGHT VERTICAL AND LEFT
-    const string CROSS     = "\xE2\x94\xBC";  // U+253C BOX DRAWINGS LIGHT VERTICAL AND HORIZONTAL
-    
-    // Stars (U+2605 block) - UTF-8: E2 98 XX
-    const string BLACK_STAR = "\xE2\x98\x85";  // U+2605 BLACK STAR
-    const string WHITE_STAR = "\xE2\x98\x86";  // U+2606 WHITE STAR
-    
-    // Arrows/triangles (U+25XX block)
-    const string ARROW_RIGHT = "\xE2\x96\xB6";  // U+25B6 BLACK RIGHT-POINTING TRIANGLE
-    const string ARROW_UP    = "\xE2\x96\xB2";  // U+25B2 BLACK UP-POINTING TRIANGLE
-    const string ARROW_DOWN  = "\xE2\x96\xBC";  // U+25BC BLACK DOWN-POINTING TRIANGLE
-    const string ARROW_LEFT  = "\xE2\x97\x80";  // U+25C0 BLACK LEFT-POINTING TRIANGLE
-    
-    // Check marks (U+27XX block)
-    const string CHECK     = "\xE2\x9C\x93";  // U+2713 CHECK MARK
-    const string CROSS_X   = "\xE2\x9C\x97";  // U+2717 BALLOT X
-    
-    // Emoji icons (4-byte UTF-8)
-    const string MONEY     = "\xF0\x9F\x92\xB0";  // U+1F4B0 MONEY BAG
-    const string TROPHY    = "\xF0\x9F\x8F\x86";  // U+1F3C6 TROPHY
-    const string DICE      = "\xF0\x9F\x8E\xB2";  // U+1F3B2 GAME DIE
-    const string CHART     = "\xF0\x9F\x93\x88";  // U+1F4C8 CHART INCREASING
-    const string CLOCK     = "\xE2\x8F\xB0";      // U+23F0 ALARM CLOCK
-    const string STAR      = "\xE2\xAD\x90";      // U+2B50 WHITE MEDIUM STAR
-    const string FIRE      = "\xF0\x9F\x94\xA5";  // U+1F525 FIRE
-    const string SLOT      = "\xF0\x9F\x8E\xB0";  // U+1F3B0 SLOT MACHINE
-    const string WHEEL     = "\xF0\x9F\x8E\xA1";  // U+1F3A1 FERRIS WHEEL
-    const string CARD      = "\xF0\x9F\x83\x8F";  // U+1F0CF PLAYING CARD BLACK JOKER
-    const string STORE     = "\xF0\x9F\x8F\xAA";  // U+1F3EA CONVENIENCE STORE
-    const string DOLLAR    = "\xF0\x9F\x92\xB5";  // U+1F4B5 DOLLAR BANKNOTE
-    const string FLOPPY    = "\xF0\x9F\x92\xBE";  // U+1F4BE FLOPPY DISK
-    const string DOOR      = "\xF0\x9F\x9A\xAA";  // U+1F6AA DOOR
-    const string CROWN     = "\xF0\x9F\x91\x91";  // U+1F451 CROWN
-    const string GLOBE     = "\xF0\x9F\x8C\x8D";  // U+1F30D EARTH GLOBE
-    const string GEM       = "\xF0\x9F\x92\x8E";  // U+1F48E GEM STONE
-    const string JAR       = "\xF0\x9F\xAB\x99";  // U+1FAD9 JAR
-    const string BUILDING  = "\xF0\x9F\x8F\x9B";  // U+1F3DB CLASSICAL BUILDING
-    const string UP_ARROW  = "\xE2\xAC\x86";      // U+2B06 UPWARDS BLACK ARROW
-}
+// They used to be duplicated here, which let the two copies drift apart.
+// Add new glyphs to the headers, not to this file.
 
 // ============================================================================
 // GENERATOR CLASS (Passive Income)
@@ -485,163 +352,8 @@ public:
 // UTILITY FUNCTIONS
 // ============================================================================
 
-/*
- * getch() - Get a single character from the terminal without waiting for Enter
- * 
- * This function modifies terminal settings temporarily to:
- * 1. Disable canonical mode (line buffering) - normally terminal waits for Enter
- * 2. Disable echo - don't show the character the user types
- * 
- * This is Linux-specific and uses the termios structure to control terminal
- * behavior. On Windows, you would use _getch() from <conio.h> instead.
- * 
- * Returns: The character that was pressed
- */
-char getch() {
-    char buf = 0;  // Buffer to store the character read
-    
-    // termios is a structure that holds terminal settings
-    // We use memset to properly initialize all fields to zero
-    // This avoids compiler warnings about uninitialized members
-    struct termios old;
-    memset(&old, 0, sizeof(old));  // Initialize all bytes to 0
-    
-    // Flush any pending output before changing terminal settings
-    fflush(stdout);
-    
-    // tcgetattr() gets the current terminal attributes
-    // Parameters: file descriptor (0 = stdin), pointer to termios struct
-    if (tcgetattr(0, &old) < 0) {
-        perror("tcgetattr()");  // Print error message if it fails
-    }
-    
-    // Modify the local flags (c_lflag):
-    // ~ICANON: Disable canonical mode (don't wait for Enter)
-    // ~ECHO: Disable echo (don't display typed characters)
-    // The ~ operator is bitwise NOT, and &= clears those specific bits
-    old.c_lflag &= ~ICANON;
-    old.c_lflag &= ~ECHO;
-    
-    // Set minimum number of characters to read and timeout
-    old.c_cc[VMIN] = 1;   // Wait for at least 1 character
-    old.c_cc[VTIME] = 0;  // No timeout
-    
-    // Apply the new settings immediately (TCSANOW)
-    if (tcsetattr(0, TCSANOW, &old) < 0) {
-        perror("tcsetattr ICANON");
-    }
-    
-    // Read a single character from stdin (file descriptor 0)
-    if (read(0, &buf, 1) < 0) {
-        perror("read()");
-    }
-    
-    // Restore the original terminal settings
-    // Re-enable canonical mode and echo
-    old.c_lflag |= ICANON;  // |= sets the bit (opposite of &= ~)
-    old.c_lflag |= ECHO;
-    
-    // Apply restored settings (TCSADRAIN waits for output to finish)
-    if (tcsetattr(0, TCSADRAIN, &old) < 0) {
-        perror("tcsetattr ~ICANON");
-    }
-    
-    return buf;
-}
-
-/*
- * getchWithTimeout() - Get a character with timeout for real-time updates (Sprint 6)
- * 
- * This allows the game to update the display (passive income) even while
- * waiting for user input. Uses select() to wait with a timeout.
- * 
- * Parameters:
- *   - timeoutMs: Maximum time to wait in milliseconds
- * 
- * Returns: The character pressed, or 0 if timeout occurred
- */
-char getchWithTimeout(int timeoutMs) {
-    struct termios old, current;
-    memset(&old, 0, sizeof(old));
-    
-    tcgetattr(0, &old);
-    current = old;
-    current.c_lflag &= ~ICANON;
-    current.c_lflag &= ~ECHO;
-    tcsetattr(0, TCSANOW, &current);
-    
-    // Use select() to wait for input with timeout
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(0, &readfds);  // 0 = stdin
-    
-    struct timeval timeout;
-    timeout.tv_sec = timeoutMs / 1000;
-    timeout.tv_usec = (timeoutMs % 1000) * 1000;
-    
-    char result = 0;
-    int ready = select(1, &readfds, NULL, NULL, &timeout);
-    
-    if (ready > 0 && FD_ISSET(0, &readfds)) {
-        read(0, &result, 1);
-    }
-    
-    // Restore terminal settings
-    tcsetattr(0, TCSANOW, &old);
-    
-    return result;
-}
-
-/*
- * clearScreen() - Clear the terminal screen and move cursor to top-left
- * 
- * Uses ANSI escape codes:
- * - \033[2J: Clear entire screen
- * - \033[1;1H: Move cursor to row 1, column 1 (top-left)
- */
-void clearScreen() {
-    cout << "\033[2J\033[1;1H";
-}
-
-/*
- * printLine() - Print a horizontal line for visual separation
- * 
- * Parameters:
- *   - ch: The character to use for the line (default '=')
- *   - length: How many characters wide (default 50)
- *   - color: ANSI color code to use (default CYAN)
- * 
- * Default parameters in C++ allow calling the function with fewer arguments.
- * If not provided, the default values are used.
- */
-void printLine(char ch = '=', int length = 50, const string& color = Color::CYAN) {
-    cout << color;
-    // Loop 'length' times, printing the character each time
-    for (int i = 0; i < length; i++) {
-        cout << ch;
-    }
-    cout << Color::RESET << endl;
-}
-
-/*
- * printCentered() - Print text centered within a given width
- * 
- * Parameters:
- *   - text: The string to center
- *   - width: Total width to center within (default 50)
- *   - color: ANSI color code (default empty = no color change)
- */
-void printCentered(const string& text, int width = 50, const string& color = "") {
-    // Calculate padding needed on the left side
-    // (width - text.length()) gives total padding, divide by 2 for left side
-    int padding = (width - text.length()) / 2;
-    
-    // Ensure padding is not negative (if text is longer than width)
-    if (padding < 0) padding = 0;
-    
-    // Print spaces for padding, then the colored text
-    cout << string(padding, ' ') << color << text << Color::RESET << endl;
-}
+// getch(), getchWithTimeout(), clearScreen(), printLine() and printCentered()
+// live in src/utils.h. formatMoney() lives in src/core/money.h.
 
 /*
  * kbhit() - Check if a key has been pressed (non-blocking)
@@ -671,38 +383,6 @@ bool kbhit() {
     // Parameters: highest fd + 1, read fds, write fds, error fds, timeout
     // Returns: number of ready descriptors, 0 if timeout, -1 if error
     return select(1, &fds, NULL, NULL, &tv) > 0;
-}
-
-/*
- * formatMoney() - Format a double as a currency string with appropriate suffix
- * 
- * For large numbers, uses suffixes like K (thousand), M (million), etc.
- * This is common in incremental games where numbers get very large.
- * 
- * Parameters:
- *   - amount: The money value to format
- * 
- * Returns: A formatted string like "$1.23K" or "$456.78M"
- */
-string formatMoney(double amount) {
-    // ostringstream allows us to build a string using << operators
-    // This is useful for complex string formatting
-    ostringstream oss;
-    oss << fixed;  // Use fixed-point notation
-    
-    if (amount >= 1e12) {
-        oss << setprecision(2) << (amount / 1e12) << "T";  // Trillion
-    } else if (amount >= 1e9) {
-        oss << setprecision(2) << (amount / 1e9) << "B";   // Billion
-    } else if (amount >= 1e6) {
-        oss << setprecision(2) << (amount / 1e6) << "M";   // Million
-    } else if (amount >= 1e3) {
-        oss << setprecision(2) << (amount / 1e3) << "K";   // Thousand
-    } else {
-        oss << setprecision(2) << amount;                   // Normal
-    }
-    
-    return "$" + oss.str();
 }
 
 // ============================================================================
