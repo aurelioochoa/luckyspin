@@ -1,8 +1,14 @@
 CXX = g++
-CXXFLAGS = -std=c++11 -Wall -Wextra -O2 -I./src
+CXXSTD = -std=c++11
+WARNINGS = -Wall -Wextra
+INCLUDES = -I./src
+CXXFLAGS = $(CXXSTD) $(WARNINGS) -O2 $(INCLUDES)
+
 TARGET = gambling_game
 SRC = gambling_game.cpp
-HEADERS = src/colors.h src/unicode.h src/utils.h
+
+TEST_TARGET = tests/run_tests
+TEST_SRC = tests/test_main.cpp
 
 # Installation directories (user-level, no sudo required)
 PREFIX = $(HOME)/.local
@@ -11,11 +17,57 @@ COMMAND_NAME = lucky-spin
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) $(HEADERS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRC)
+# -MMD -MP emits a .d file listing every header the source actually includes,
+# so edits to src/*.h and src/core/*.h trigger a rebuild automatically. This
+# replaces the old hand-maintained HEADERS list, which had drifted out of date.
+$(TARGET): $(SRC)
+	$(CXX) $(CXXFLAGS) -MMD -MP -o $(TARGET) $(SRC)
+
+-include $(TARGET).d
+-include gambling_game.d
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+# Build and run the core unit tests (text width, money, RNG, deck, save paths)
+test: $(TEST_TARGET)
+	@./$(TEST_TARGET)
+
+$(TEST_TARGET): $(TEST_SRC)
+	$(CXX) $(CXXFLAGS) -MMD -MP -o $(TEST_TARGET) $(TEST_SRC)
+
+-include tests/run_tests.d
+
+# Run the tests under AddressSanitizer + UndefinedBehaviorSanitizer
+test-asan:
+	$(CXX) $(CXXSTD) $(WARNINGS) $(INCLUDES) -O1 -g \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-o tests/run_tests_asan $(TEST_SRC)
+	./tests/run_tests_asan
+	@rm -f tests/run_tests_asan
+
+# ---------------------------------------------------------------------------
+# Development builds
+# ---------------------------------------------------------------------------
+
+# Unoptimized build with debug symbols, for gdb
+debug:
+	$(CXX) $(CXXSTD) $(WARNINGS) $(INCLUDES) -O0 -g -DDEBUG -o $(TARGET)_debug $(SRC)
+	@echo "Built $(TARGET)_debug - run with: gdb ./$(TARGET)_debug"
+
+# Build the game with sanitizers enabled
+sanitize:
+	$(CXX) $(CXXSTD) $(WARNINGS) $(INCLUDES) -O1 -g \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-o $(TARGET)_asan $(SRC)
+	@echo "Built $(TARGET)_asan"
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TARGET)_debug $(TARGET)_asan
+	rm -f test_unicode
+	rm -f $(TEST_TARGET) tests/run_tests_asan
+	rm -f *.o *.d tests/*.d
 
 run: $(TARGET)
 	./$(TARGET)
@@ -80,7 +132,9 @@ check-fonts:
 		echo "✗ Noto fonts not found. Run 'make install-fonts' to install."; \
 	fi
 
-# Build and run Unicode test
+# Build and run the Unicode font/rendering test.
+# Note: this is a VISUAL check - it cannot fail automatically. For assertions
+# on display width, use `make test` instead.
 test-unicode: test_unicode.cpp
 	$(CXX) $(CXXFLAGS) -o test_unicode test_unicode.cpp
 	./test_unicode
@@ -124,6 +178,8 @@ help:
 	@echo "Build targets:"
 	@echo "  make              - Build the game"
 	@echo "  make run          - Build and run the game"
+	@echo "  make debug        - Unoptimized build with debug symbols"
+	@echo "  make sanitize     - Build with ASan + UBSan"
 	@echo "  make clean        - Remove build files"
 	@echo ""
 	@echo "Installation targets:"
@@ -138,6 +194,10 @@ help:
 	@echo "  make check-fonts        - Check if Unicode fonts are installed"
 	@echo ""
 	@echo "Test targets:"
-	@echo "  make test-unicode - Build and run Unicode symbol test"
+	@echo "  make test         - Run core unit tests (width, money, RNG, deck)"
+	@echo "  make test-asan    - Run unit tests under ASan + UBSan"
+	@echo "  make test-unicode - Visual Unicode symbol check"
 
-.PHONY: all clean run install uninstall help install-fonts install-fonts-arch install-fonts-debian install-fonts-fedora check-fonts test-unicode
+.PHONY: all clean run install uninstall help \
+	install-fonts install-fonts-arch install-fonts-debian install-fonts-fedora \
+	check-fonts test-unicode test test-asan debug sanitize

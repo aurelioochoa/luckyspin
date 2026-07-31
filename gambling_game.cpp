@@ -28,7 +28,7 @@
 // classes, and constants that we can use in our program.
 
 #include <iostream>   // For input/output streams (cout, cin, endl)
-#include <cstdlib>    // For rand(), srand() - random number generation
+#include <cstdlib>    // For getenv(), rename(), remove()
 #include <cmath>      // For pow() - power function
 #include <ctime>      // For time() - used to seed random number generator
 #include <string>     // For std::string class
@@ -51,6 +51,7 @@
 #include "core/text_width.h" // text::displayWidth() - column-accurate padding
 #include "core/money.h"      // formatMoney()
 #include "core/rng.h"        // Rng - seedable random number generator
+#include "core/deck.h"       // cards::Card, cards::Shoe - real blackjack deck
 #include "core/save_path.h"  // savepath::resolve() - XDG save location
 
 // Using the standard namespace so we don't have to write "std::" everywhere
@@ -173,8 +174,14 @@ public:
      * Normally we'd use purchase() for incremental changes.
      */
     void setOwned(int count) {
+        // Clamp: negative counts would produce negative income, and absurdly
+        // large counts overflow pow() in getCurrentCost() to infinity.
+        if (count < 0) count = 0;
+        if (count > MAX_OWNED) count = MAX_OWNED;
         owned = count;
     }
+    
+    static const int MAX_OWNED = 100000;
     
     /*
      * reset() - Reset generator to initial state (for game restart)
@@ -444,9 +451,27 @@ private:
      * We also track when the game was last saved to calculate offline earnings.
      */
     
-    static const string SAVE_FILE;  // File path for save data
+    static const string SAVE_FILENAME;  // Bare file name, no directory
     time_t lastSaveTime;            // When the game was last saved
     time_t gameStartTime;           // When this session started (for offline calc)
+
+    /*
+     * savePath() - Full path to the save file.
+     *
+     * Resolved once (creating ~/.local/share/luckyspin if needed) and cached.
+     * Using a directory rather than the CWD means the `lucky-spin` command
+     * finds the same save no matter where it is launched from.
+     */
+    static const string& savePath() {
+        static const string path = savepath::resolve(SAVE_FILENAME);
+        return path;
+    }
+
+    // Previous save, kept so a corrupt write is recoverable.
+    static string backupPath() { return savePath() + ".bak"; }
+
+    // Written first, then renamed over savePath() so a save is never partial.
+    static string tempPath() { return savePath() + ".tmp"; }
     
     // ========================================================================
     // PRESTIGE SYSTEM VARIABLES (Sprint 4)
@@ -525,6 +550,15 @@ private:
     bool interestUnlocked;          // Whether interest system is available
     double interestRate;            // Interest rate per second
     
+    // ========================================================================
+    // BLACKJACK SHOE
+    // ========================================================================
+    /*
+     * A 6-deck shoe shared across hands. Persisting it between hands is what
+     * makes the deck finite: cards already dealt are gone until it reshuffles.
+     */
+    cards::Shoe shoe;
+    
 public:
     // ========================================================================
     // CONSTRUCTOR
@@ -554,10 +588,12 @@ public:
         for (int i = 0; i < 10; i++) {
             milestoneUnlocked[i] = false;
         }
-        // srand() seeds the random number generator
-        // time(0) returns current time in seconds since epoch
-        // This ensures different random sequences each time we run
-        srand(time(0));
+        /*
+         * Randomness comes from Rng::global() (see core/rng.h), which seeds
+         * itself from std::random_device mixed with the clock. No srand() call
+         * is needed, and tests can use their own seeded Rng instance.
+         */
+        shoe.shuffle(Rng::global());
         
         // Initialize the last update time to now
         lastUpdateTime = time(0);
@@ -1166,15 +1202,14 @@ public:
             // Highlight selected item
             if (i == menuSelection) {
                 cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-                cout << items[i].icon << " " << items[i].name;
-                // Pad to consistent width
-                int padding = 20 - items[i].name.length();
-                for (int p = 0; p < padding; p++) cout << " ";
+                cout << items[i].icon << " ";
+                // Pad to a consistent column count (not byte count)
+                printPadded(items[i].name, 20);
                 cout << Color::RESET << " " << Color::CYAN << items[i].desc << Color::RESET << "\n";
             } else {
-                cout << "    " << items[i].icon << " " << Color::WHITE << items[i].name << Color::RESET;
-                int padding = 20 - items[i].name.length();
-                for (int p = 0; p < padding; p++) cout << " ";
+                cout << "    " << items[i].icon << " " << Color::WHITE;
+                printPadded(items[i].name, 20);
+                cout << Color::RESET;
                 cout << " " << Color::DIM << items[i].desc << Color::RESET << "\n";
             }
         }
@@ -1385,7 +1420,7 @@ public:
         double luckyChance = getUpgradeValue(UpgradeType::LUCKY_BONUS);
         
         // Check if lucky bonus triggers (luckyChance is a percentage)
-        if (luckyChance > 0 && (rand() % 100) < luckyChance) {
+        if (Rng::global().chancePercent(luckyChance)) {
             cout << "  " << Color::BG_YELLOW << Color::BOLD << Color::RED 
                  << " LUCKY BONUS! 2x " << Color::RESET << "\n";
             return amount * 2.0;
@@ -1425,9 +1460,10 @@ public:
             usleep(300000); // Sleep for 300,000 microseconds (0.3 seconds)
         }
         
-        // Generate random outcome using upgraded win chance
-        // rand() % 100 gives 0-99, compare against winChance percentage
-        bool won = (rand() % 100) < winChance;
+        // Generate random outcome using upgraded win chance.
+        // chancePercent() honours fractional percentages exactly, unlike
+        // `rand() % 100 < winChance` which rounded 62.5% up to 63%.
+        bool won = Rng::global().chancePercent(winChance);
         
         cout << "\n\n";
         
@@ -1507,7 +1543,7 @@ public:
         for (int spin = 0; spin < 15; spin++) {
             // Generate random symbols for each reel
             for (int i = 0; i < 3; i++) {
-                slots[i] = rand() % Symbols::COUNT;
+                slots[i] = Rng::global().below(Symbols::COUNT);
             }
             
             // \r is carriage return - moves cursor to start of line
@@ -1526,7 +1562,7 @@ public:
         // Determine win using upgraded chance (Sprint 2)
         // Instead of relying on natural triple match (~16.7%), we use the upgrade value
         // If the random roll succeeds, we force a match; otherwise keep random result
-        bool won = (rand() % 100) < winChance;
+        bool won = Rng::global().chancePercent(winChance);
         
         // If won by upgrade chance, force all slots to match
         if (won) {
@@ -1598,45 +1634,28 @@ public:
         printCentered("BLACKJACK", 50, Color::GREEN + Color::BOLD);
         printLine('-', 50, Color::GREEN);
         
-        // Card values: 1-10 (Ace=1 or 11, face cards=10)
-        // Simple representation: generate random values
-        auto drawCard = []() -> int {
-            int card = (rand() % 13) + 1;  // 1-13
-            if (card > 10) card = 10;       // Face cards = 10
-            return card;
+        /*
+         * Cards come from a real shoe (see core/deck.h): finite, shuffled, and
+         * dealt without replacement, so the suit shown belongs to the card and
+         * face cards keep their identity instead of all rendering as "10".
+         */
+        if (shoe.needsShuffle()) {
+            shoe.shuffle(Rng::global());
+        }
+        
+        auto drawCard = [&]() -> cards::Card {
+            return shoe.draw(Rng::global());
         };
         
-        auto getCardName = [](int card) -> string {
-            if (card == 1) return "A";
-            if (card == 10) return "10";
-            if (card == 11) return "J";
-            if (card == 12) return "Q";
-            if (card == 13) return "K";
-            return to_string(card);
+        // Render a card as [Rank+Suit], colored by its real suit
+        auto displayCard = [](const cards::Card& card) -> string {
+            const string suitGlyph = Cards::SUITS[card.suit];
+            const string suitColor = cards::isRedSuit(card.suit) ? Color::RED : Color::WHITE;
+            return "[" + suitColor + cards::rankName(card.rank) + suitGlyph + Color::RESET + "]";
         };
         
-        // Calculate hand value, handling Aces
-        auto calculateHand = [](vector<int>& hand) -> int {
-            int total = 0;
-            int aces = 0;
-            for (int card : hand) {
-                if (card == 1) {
-                    aces++;
-                    total += 11;  // Count Ace as 11 initially
-                } else {
-                    total += card;
-                }
-            }
-            // Convert Aces from 11 to 1 if busting
-            while (total > 21 && aces > 0) {
-                total -= 10;
-                aces--;
-            }
-            return total;
-        };
-        
-        // Deal initial cards
-        vector<int> playerHand, dealerHand;
+        // Deal initial cards: player, dealer, player, dealer
+        vector<cards::Card> playerHand, dealerHand;
         playerHand.push_back(drawCard());
         dealerHand.push_back(drawCard());
         playerHand.push_back(drawCard());
@@ -1644,21 +1663,6 @@ public:
         
         bool playerBust = false;
         bool playerStand = false;
-        
-        // Helper to get card suit (Unicode - Sprint 6)
-        auto getCardSuit = [](int cardIndex) -> string {
-            const string suits[] = {Cards::SPADE, Cards::HEART, Cards::DIAMOND, Cards::CLUB};
-            return suits[cardIndex % 4];
-        };
-        
-        // Helper to display a card with suit
-        auto displayCard = [&](int card, int index) -> string {
-            string suit = getCardSuit(index);
-            string suitColor = (index % 4 == 1 || index % 4 == 2) ? Color::RED : Color::WHITE;
-            return "[" + suitColor + getCardName(card) + suit + Color::RESET + "]";
-        };
-        
-        int cardIndex = 0;  // Track card index for suits
         
         // Player's turn with arrow/WASD navigation
         int bjSelection = 0;  // 0=Hit, 1=Stand, 2=Quit
@@ -1672,18 +1676,19 @@ public:
             printCentered(Cards::SPADE + " BLACKJACK " + Cards::HEART, 50, Color::GREEN + Color::BOLD);
             printLine('-', 50, Color::GREEN);
             
-            int playerTotal = calculateHand(playerHand);
+            int playerTotal = cards::handTotal(playerHand);
             
             // Display current state with card suits
             cout << "\n  " << Color::WHITE << "Dealer shows: " << Color::CYAN 
-                 << displayCard(dealerHand[0], 0) << " [" << Color::DIM << "??" << Color::RESET << "]" 
+                 << displayCard(dealerHand[0]) << " [" << Color::DIM << "??" << Color::RESET << "]" 
                  << Color::RESET << "\n";
             
             cout << "  " << Color::WHITE << "Your hand:    " << Color::YELLOW;
             for (size_t i = 0; i < playerHand.size(); i++) {
-                cout << displayCard(playerHand[i], i + 2) << " ";
+                cout << displayCard(playerHand[i]) << " ";
             }
-            cout << Color::RESET << "= " << Color::BOLD << playerTotal << Color::RESET << "\n";
+            cout << Color::RESET << "= " << Color::BOLD << playerTotal
+                 << (cards::isSoft(playerHand) ? " (soft)" : "") << Color::RESET << "\n";
             
             if (playerTotal == 21) {
                 cout << "\n  " << Color::BG_GREEN << Color::WHITE << Color::BOLD 
@@ -1744,9 +1749,7 @@ public:
                 // Execute selected action
                 if (bjSelection == 0) {
                     // Hit
-                    int newCard = drawCard();
-                    playerHand.push_back(newCard);
-                    cardIndex++;
+                    playerHand.push_back(drawCard());
                 } else if (bjSelection == 1) {
                     // Stand
                     playerStand = true;
@@ -1760,9 +1763,7 @@ public:
                 }
             } else if (choice == 'h' || choice == 'H') {
                 // Quick key for Hit
-                int newCard = drawCard();
-                playerHand.push_back(newCard);
-                cardIndex++;
+                playerHand.push_back(drawCard());
             } else if (choice == 'q' || choice == 'Q') {
                 // Quick key for Quit
                 cout << "\n  " << Color::YELLOW << "You left the table. Bet forfeited." << Color::RESET << "\n";
@@ -1773,7 +1774,7 @@ public:
             }
         }
         
-        int playerTotal = calculateHand(playerHand);
+        int playerTotal = cards::handTotal(playerHand);
         
         if (playerBust) {
             cout << "\n  " << Color::BG_RED << Color::WHITE << Color::BOLD 
@@ -1784,34 +1785,36 @@ public:
         } else {
             // Dealer's turn
             cout << "\n  " << Color::WHITE << "Dealer reveals: " << Color::CYAN;
-            for (int card : dealerHand) {
-                cout << "[" << getCardName(card) << "] ";
+            for (size_t i = 0; i < dealerHand.size(); i++) {
+                cout << displayCard(dealerHand[i]) << " ";
             }
-            int dealerTotal = calculateHand(dealerHand);
+            int dealerTotal = cards::handTotal(dealerHand);
             cout << Color::RESET << "= " << dealerTotal << "\n";
             usleep(800000);
             
             // Dealer draws until 17+
             // Apply Dealer Jinx upgrade - chance for dealer to bust early
             double dealerBustChance = getUpgradeValue(UpgradeType::DEALER_BUST);
-            bool forcedBust = (rand() % 100) < dealerBustChance;
+            bool forcedBust = Rng::global().chancePercent(dealerBustChance);
             
             while (dealerTotal < 17) {
-                int newCard = drawCard();
+                cards::Card newCard = drawCard();
                 dealerHand.push_back(newCard);
-                dealerTotal = calculateHand(dealerHand);
-                cout << "  Dealer draws: " << Color::CYAN << "[" << getCardName(newCard) 
-                     << "]" << Color::RESET << " = " << dealerTotal << "\n";
+                dealerTotal = cards::handTotal(dealerHand);
+                cout << "  Dealer draws: " << Color::CYAN << displayCard(newCard)
+                     << Color::RESET << " = " << dealerTotal << "\n";
                 usleep(800000);
             }
             
-            // If Dealer Jinx triggered and dealer didn't naturally bust, force a bust
+            // If Dealer Jinx triggered and dealer didn't naturally bust, deal the
+            // dealer one more card to push them over 21.
             if (forcedBust && dealerTotal <= 21) {
-                int bustCard = 10;  // Force a 10 to likely bust
+                cards::Card bustCard = drawCard();
                 dealerHand.push_back(bustCard);
-                dealerTotal = calculateHand(dealerHand);
-                cout << "  " << Color::MAGENTA << "★ Dealer Jinx! ★" << Color::RESET << "\n";
-                cout << "  Dealer draws: " << Color::CYAN << "[10]" 
+                dealerTotal = cards::handTotal(dealerHand);
+                cout << "  " << Color::MAGENTA << UI::BLACK_STAR << " Dealer Jinx! "
+                     << UI::BLACK_STAR << Color::RESET << "\n";
+                cout << "  Dealer draws: " << Color::CYAN << displayCard(bustCard)
                      << Color::RESET << " = " << dealerTotal << "\n";
                 usleep(800000);
             }
@@ -1833,7 +1836,7 @@ public:
             } else if (playerWins) {
                 // Player wins - apply Card Counter upgrade for better payouts
                 double basePayout = getUpgradeValue(UpgradeType::BLACKJACK_PAYOUT);
-                double payout = (playerTotal == 21 && playerHand.size() == 2) ? basePayout + 0.5 : basePayout;
+                double payout = cards::isNaturalBlackjack(playerHand) ? basePayout + 0.5 : basePayout;
                 double winAmount = betAmount * payout;
                 winAmount = applyLuckyBonus(winAmount);
                 money += winAmount;
@@ -1985,8 +1988,8 @@ public:
             usleep(400000);
         }
         
-        // Generate result (0-36)
-        int result = rand() % 37;
+        // Generate result (0-36). below() is bias-free, unlike `rand() % 37`.
+        int result = Rng::global().below(37);
         bool resultRed = isRed(result);
         
         cout << "\n\n  The ball lands on: ";
@@ -2229,8 +2232,13 @@ public:
      * Returns: true if save was successful, false otherwise
      */
     bool saveGame() {
-        // ofstream is "output file stream" - used for writing to files
-        ofstream file(SAVE_FILE);
+        /*
+         * Written to a temp file first, then renamed into place. rename() is
+         * atomic within a filesystem, so a crash or full disk mid-write leaves
+         * the previous save intact instead of a half-written one.
+         */
+        const string temp = tempPath();
+        ofstream file(temp.c_str());
         
         if (!file.is_open()) {
             cout << "\n  " << Color::RED << UI::CROSS_X << " Failed to save game!" << Color::RESET;
@@ -2294,9 +2302,101 @@ public:
             file << "milestone_" << i << "=" << milestoneUnlocked[i] << endl;
         }
         
+        // Check for write errors (e.g. disk full) BEFORE replacing the old save.
+        file.flush();
+        const bool writeOk = file.good();
         file.close();
+        
+        if (!writeOk) {
+            std::remove(temp.c_str());
+            cout << "\n  " << Color::RED << UI::CROSS_X << " Failed to write save data!" << Color::RESET;
+            return false;
+        }
+        
+        // Keep the previous save as a backup, then swap the new one in.
+        if (savepath::fileExists(savePath())) {
+            std::rename(savePath().c_str(), backupPath().c_str());
+        }
+        if (std::rename(temp.c_str(), savePath().c_str()) != 0) {
+            std::remove(temp.c_str());
+            cout << "\n  " << Color::RED << UI::CROSS_X << " Failed to finalize save!" << Color::RESET;
+            return false;
+        }
+        
         lastSaveTime = time(0);
         
+        return true;
+    }
+    
+    // ========================================================================
+    // SAFE SAVE-FILE PARSING
+    // ========================================================================
+    /*
+     * stod()/stoi() throw on malformed input. A save file is user-writable and
+     * can be truncated by a crash, so a bad value must never take the process
+     * down. These helpers report failure instead and leave the target alone.
+     */
+    
+    static bool parseDouble(const string& text, double& out) {
+        try {
+            size_t consumed = 0;
+            const double value = std::stod(text, &consumed);
+            if (consumed == 0) return false;
+            if (!(value == value)) return false;              // reject NaN
+            if (value > 1e300 || value < -1e300) return false; // reject inf
+            out = value;
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    
+    static bool parseInt(const string& text, int& out) {
+        try {
+            size_t consumed = 0;
+            const int value = std::stoi(text, &consumed);
+            if (consumed == 0) return false;
+            out = value;
+            return true;
+        } catch (const std::exception&) {
+            return false;   // covers both invalid_argument and out_of_range
+        }
+    }
+    
+    static bool parseLong(const string& text, long& out) {
+        try {
+            size_t consumed = 0;
+            const long value = std::stol(text, &consumed);
+            if (consumed == 0) return false;
+            out = value;
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    
+    static bool parseBool(const string& text, bool& out) {
+        int value = 0;
+        if (!parseInt(text, value)) return false;
+        out = (value != 0);
+        return true;
+    }
+    
+    // Non-negative doubles (money, earnings) clamped at 0.
+    static bool parseMoney(const string& text, double& out) {
+        double value = 0.0;
+        if (!parseDouble(text, value)) return false;
+        out = (value < 0.0) ? 0.0 : value;
+        return true;
+    }
+    
+    // Counts must be >= 0 and within a sane bound.
+    static bool parseCount(const string& text, int& out, int maxValue) {
+        int value = 0;
+        if (!parseInt(text, value)) return false;
+        if (value < 0) value = 0;
+        if (value > maxValue) value = maxValue;
+        out = value;
         return true;
     }
     
@@ -2309,122 +2409,28 @@ public:
      * Returns: true if load was successful, false otherwise
      */
     bool loadGame() {
-        // ifstream is "input file stream" - used for reading from files
-        ifstream file(SAVE_FILE);
+        // Bring a pre-XDG save in the current directory forward, once.
+        savepath::migrateLegacy(SAVE_FILENAME, savePath());
         
-        if (!file.is_open()) {
-            // No save file exists - this is normal for new players
-            return false;
-        }
-        
-        string line;
         time_t savedTimestamp = 0;
         
-        // Read and verify header
-        if (!getline(file, line) || line != "LUCKY_SPIN_SAVE_V1") {
-            file.close();
-            return false;  // Invalid or incompatible save file
-        }
-        
-        // Parse each line
-        while (getline(file, line)) {
-            // Find the '=' separator
-            size_t eqPos = line.find('=');
-            if (eqPos == string::npos) continue;  // Skip invalid lines
-            
-            // Split into key and value
-            string key = line.substr(0, eqPos);
-            string value = line.substr(eqPos + 1);
-            
-            // Parse based on key
-            // stod = string to double, stoi = string to int, stol = string to long
-            if (key == "timestamp") {
-                savedTimestamp = stol(value);
-            } else if (key == "money") {
-                money = stod(value);
-            } else if (key == "betAmount") {
-                betAmount = stod(value);
-            } else if (key == "round") {
-                round = stoi(value);
-            } else if (key == "totalWins") {
-                totalWins = stoi(value);
-            } else if (key == "totalLosses") {
-                totalLosses = stoi(value);
-            } else if (key == "peakMoney") {
-                peakMoney = stod(value);
-            } else if (key == "lifetimeEarnings") {
-                lifetimeEarnings = stod(value);
-            } else if (key.substr(0, 4) == "gen_") {
-                // Generator data: gen_0, gen_1, etc.
-                int index = stoi(key.substr(4));
-                if (index >= 0 && index < (int)generators.size()) {
-                    generators[index].setOwned(stoi(value));
-                }
-            } else if (key.substr(0, 4) == "upg_") {
-                // Upgrade data: upg_0, upg_1, etc.
-                int index = stoi(key.substr(4));
-                if (index >= 0 && index < (int)upgrades.size()) {
-                    upgrades[index].setLevel(stoi(value));
-                }
-            }
-            // Prestige data (Sprint 4)
-            else if (key == "prestigeLevel") {
-                prestigeLevel = stoi(value);
-            } else if (key == "prestigeMultiplier") {
-                prestigeMultiplier = stod(value);
-            } else if (key == "totalLifetimeEarnings") {
-                totalLifetimeEarnings = stod(value);
-            }
-            // Achievement data (Sprint 4)
-            else if (key == "achFirstWin") {
-                achFirstWin = (stoi(value) != 0);
-            } else if (key == "achHighRoller") {
-                achHighRoller = (stoi(value) != 0);
-            } else if (key == "achMillionaire") {
-                achMillionaire = (stoi(value) != 0);
-            } else if (key == "achLuckyStreak") {
-                achLuckyStreak = (stoi(value) != 0);
-            } else if (key == "achGenerator10") {
-                achGenerator10 = (stoi(value) != 0);
-            } else if (key == "achAllUpgrades") {
-                achAllUpgrades = (stoi(value) != 0);
-            } else if (key == "achPrestige1") {
-                achPrestige1 = (stoi(value) != 0);
-            } else if (key == "achPrestige5") {
-                achPrestige5 = (stoi(value) != 0);
-            } else if (key == "currentWinStreak") {
-                currentWinStreak = stoi(value);
-            }
-            // Phase B data
-            else if (key == "achievementMultiplier") {
-                achievementMultiplier = stod(value);
-            } else if (key == "prestigeStars") {
-                prestigeStars = stoi(value);
-            } else if (key == "perkStartingMoney") {
-                perkStartingMoney = stoi(value);
-            } else if (key == "perkGeneratorDiscount") {
-                perkGeneratorDiscount = stoi(value);
-            } else if (key == "perkOfflineCap") {
-                perkOfflineCap = stoi(value);
-            } else if (key == "perkPassiveBoost") {
-                perkPassiveBoost = stoi(value);
-            }
-            // Phase C data
-            else if (key == "specializationId") {
-                specializationId = stoi(value);
-            } else if (key == "interestUnlocked") {
-                interestUnlocked = (stoi(value) != 0);
-            } else if (key == "interestRate") {
-                interestRate = stod(value);
-            } else if (key.substr(0, 10) == "milestone_") {
-                int index = stoi(key.substr(10));
-                if (index >= 0 && index < 10) {
-                    milestoneUnlocked[index] = (stoi(value) != 0);
-                }
+        // Try the real save; if it is missing or unreadable, fall back to the
+        // backup written by the previous successful save.
+        bool loaded = loadFrom(savePath(), savedTimestamp);
+        if (!loaded) {
+            loaded = loadFrom(backupPath(), savedTimestamp);
+            if (loaded) {
+                cout << "\n  " << Color::YELLOW << UI::CROSS_X
+                     << " Save file was unreadable - restored from backup."
+                     << Color::RESET << "\n";
+                usleep(1500000);
             }
         }
         
-        file.close();
+        if (!loaded) {
+            // No usable save. Normal for new players.
+            return false;
+        }
         
         // Recalculate achievement multiplier in case it wasn't saved (backward compatibility)
         updateAchievementMultiplier();
@@ -2437,6 +2443,146 @@ public:
         // Update the last update time to now
         lastUpdateTime = time(0);
         lastSaveTime = time(0);
+        
+        return true;
+    }
+    
+    /*
+     * loadFrom() - Parse one save file into the current game state.
+     *
+     * Every value goes through a parse helper that cannot throw. An
+     * unrecognized key or an unparseable value is skipped, leaving that field
+     * at its constructor default, so a partially corrupt file still restores
+     * as much progress as possible instead of crashing the game.
+     *
+     * Returns: true if the file existed and had a valid header
+     */
+    bool loadFrom(const string& path, time_t& savedTimestamp) {
+        ifstream file(path.c_str());
+        
+        if (!file.is_open()) {
+            return false;
+        }
+        
+        string line;
+        
+        // Read and verify header
+        if (!getline(file, line) || line != "LUCKY_SPIN_SAVE_V1") {
+            return false;  // Invalid or incompatible save file
+        }
+        
+        // Parse each line
+        while (getline(file, line)) {
+            // Strip a trailing CR so files touched on Windows still load
+            if (!line.empty() && line[line.size() - 1] == '\r') {
+                line.erase(line.size() - 1);
+            }
+            
+            // Find the '=' separator
+            size_t eqPos = line.find('=');
+            if (eqPos == string::npos) continue;  // Skip invalid lines
+            
+            // Split into key and value
+            const string key = line.substr(0, eqPos);
+            const string value = line.substr(eqPos + 1);
+            
+            if (key == "timestamp") {
+                long parsed = 0;
+                if (parseLong(value, parsed) && parsed > 0) {
+                    savedTimestamp = static_cast<time_t>(parsed);
+                }
+            } else if (key == "money") {
+                parseMoney(value, money);
+            } else if (key == "betAmount") {
+                parseMoney(value, betAmount);
+            } else if (key == "round") {
+                parseCount(value, round, INT_MAX - 1);
+            } else if (key == "totalWins") {
+                parseCount(value, totalWins, INT_MAX - 1);
+            } else if (key == "totalLosses") {
+                parseCount(value, totalLosses, INT_MAX - 1);
+            } else if (key == "peakMoney") {
+                parseMoney(value, peakMoney);
+            } else if (key == "lifetimeEarnings") {
+                parseMoney(value, lifetimeEarnings);
+            } else if (key.compare(0, 4, "gen_") == 0) {
+                // Generator data: gen_0, gen_1, etc.
+                int index = -1;
+                int owned = 0;
+                if (parseInt(key.substr(4), index) &&
+                    index >= 0 && index < (int)generators.size() &&
+                    parseCount(value, owned, Generator::MAX_OWNED)) {
+                    generators[index].setOwned(owned);
+                }
+            } else if (key.compare(0, 4, "upg_") == 0) {
+                // Upgrade data: upg_0, upg_1, etc.
+                int index = -1;
+                int level = 0;
+                if (parseInt(key.substr(4), index) &&
+                    index >= 0 && index < (int)upgrades.size() &&
+                    parseCount(value, level, upgrades[index].getMaxLevel())) {
+                    upgrades[index].setLevel(level);
+                }
+            }
+            // Prestige data (Sprint 4)
+            else if (key == "prestigeLevel") {
+                parseCount(value, prestigeLevel, 100000);
+            } else if (key == "prestigeMultiplier") {
+                double parsed = 1.0;
+                if (parseDouble(value, parsed) && parsed >= 1.0) prestigeMultiplier = parsed;
+            } else if (key == "totalLifetimeEarnings") {
+                parseMoney(value, totalLifetimeEarnings);
+            }
+            // Achievement data (Sprint 4)
+            else if (key == "achFirstWin") {
+                parseBool(value, achFirstWin);
+            } else if (key == "achHighRoller") {
+                parseBool(value, achHighRoller);
+            } else if (key == "achMillionaire") {
+                parseBool(value, achMillionaire);
+            } else if (key == "achLuckyStreak") {
+                parseBool(value, achLuckyStreak);
+            } else if (key == "achGenerator10") {
+                parseBool(value, achGenerator10);
+            } else if (key == "achAllUpgrades") {
+                parseBool(value, achAllUpgrades);
+            } else if (key == "achPrestige1") {
+                parseBool(value, achPrestige1);
+            } else if (key == "achPrestige5") {
+                parseBool(value, achPrestige5);
+            } else if (key == "currentWinStreak") {
+                parseCount(value, currentWinStreak, INT_MAX - 1);
+            }
+            // Phase B data
+            else if (key == "achievementMultiplier") {
+                double parsed = 1.0;
+                if (parseDouble(value, parsed) && parsed >= 1.0) achievementMultiplier = parsed;
+            } else if (key == "prestigeStars") {
+                parseCount(value, prestigeStars, INT_MAX - 1);
+            } else if (key == "perkStartingMoney") {
+                parseCount(value, perkStartingMoney, 10);
+            } else if (key == "perkGeneratorDiscount") {
+                parseCount(value, perkGeneratorDiscount, 10);
+            } else if (key == "perkOfflineCap") {
+                parseCount(value, perkOfflineCap, 5);
+            } else if (key == "perkPassiveBoost") {
+                parseCount(value, perkPassiveBoost, 20);
+            }
+            // Phase C data
+            else if (key == "specializationId") {
+                parseCount(value, specializationId, 4);
+            } else if (key == "interestUnlocked") {
+                parseBool(value, interestUnlocked);
+            } else if (key == "interestRate") {
+                double parsed = 0.0;
+                if (parseDouble(value, parsed) && parsed >= 0.0) interestRate = parsed;
+            } else if (key.compare(0, 10, "milestone_") == 0) {
+                int index = -1;
+                if (parseInt(key.substr(10), index) && index >= 0 && index < 10) {
+                    parseBool(value, milestoneUnlocked[index]);
+                }
+            }
+        }
         
         return true;
     }
@@ -2528,7 +2674,9 @@ public:
      * deleteSaveFile() - Delete the save file (for testing or reset)
      */
     void deleteSaveFile() {
-        remove(SAVE_FILE.c_str());
+        remove(savePath().c_str());
+        remove(backupPath().c_str());
+        remove(tempPath().c_str());
     }
     
     // ========================================================================
@@ -3456,8 +3604,8 @@ public:
         lastUpdateTime = time(0);
         lastSaveTime = time(0);
         
-        // Delete save file
-        remove(SAVE_FILE.c_str());
+        // Delete save file (and its backup, so a restart really is a restart)
+        deleteSaveFile();
     }
     
     /*
@@ -3682,7 +3830,7 @@ public:
  * This is because static members are shared across all instances and need
  * a single definition in memory.
  */
-const string GamblingGame::SAVE_FILE = "lucky_spin_save.txt";
+const string GamblingGame::SAVE_FILENAME = "lucky_spin_save.txt";
 
 // ============================================================================
 // MAIN FUNCTION
@@ -3697,16 +3845,39 @@ const string GamblingGame::SAVE_FILE = "lucky_spin_save.txt";
  *          Non-zero values indicate errors
  */
 int main() {
-    // Create an instance (object) of the GamblingGame class
-    // This calls the constructor, initializing all member variables
-    GamblingGame game;
+    /*
+     * Snapshot the terminal settings BEFORE anything switches it into raw mode,
+     * and register handlers to put them back. Without this, quitting with
+     * Ctrl+C leaves the user's shell with no echo and no line editing.
+     */
+    terminal::init();
     
-    // Try to load existing save file (Sprint 3)
-    // If successful, offline earnings will be calculated and shown
-    game.loadGame();
-    
-    // Start the game by calling the play() method
-    game.play();
+    try {
+        // Create an instance (object) of the GamblingGame class
+        // This calls the constructor, initializing all member variables
+        GamblingGame game;
+        
+        // Try to load existing save file (Sprint 3)
+        // If successful, offline earnings will be calculated and shown
+        game.loadGame();
+        
+        // Start the game by calling the play() method
+        game.play();
+    }
+    catch (const std::exception& e) {
+        /*
+         * Restore the terminal before printing, otherwise the message renders
+         * into a raw-mode terminal and the shell is left unusable.
+         */
+        terminal::restore();
+        std::cerr << "\nLucky Spin hit an unexpected error: " << e.what() << "\n";
+        return 1;
+    }
+    catch (...) {
+        terminal::restore();
+        std::cerr << "\nLucky Spin hit an unexpected error.\n";
+        return 1;
+    }
     
     // Return 0 to indicate successful program completion
     return 0;
