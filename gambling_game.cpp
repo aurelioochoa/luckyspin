@@ -55,6 +55,7 @@
 #include "core/save_path.h"  // savepath::resolve() - XDG save location
 #include "core/generator.h"  // Generator - passive income source
 #include "core/upgrade.h"    // Upgrade, UpgradeType
+#include "core/economy.h"    // economy:: - headless money math
 
 // Using the standard namespace so we don't have to write "std::" everywhere
 // In larger projects, it's often better to use "std::" explicitly
@@ -504,21 +505,7 @@ public:
      * Returns: The current value of that upgrade, or a default if not found
      */
     double getUpgradeValue(UpgradeType type) const {
-        for (const auto& upg : upgrades) {
-            if (upg.getType() == type) {
-                return upg.getCurrentValue();
-            }
-        }
-        // Return sensible defaults if upgrade not found
-        switch (type) {
-            case UpgradeType::WHEEL_CHANCE: return 50.0;
-            case UpgradeType::WHEEL_PAYOUT: return 2.0;
-            case UpgradeType::SLOTS_CHANCE: return 16.67;
-            case UpgradeType::SLOTS_PAYOUT: return 5.0;
-            case UpgradeType::INCOME_BOOST: return 100.0;
-            case UpgradeType::LUCKY_BONUS: return 0.0;
-            default: return 0.0;
-        }
+        return economy::upgradeValue(upgrades, type);
     }
     
     /*
@@ -528,7 +515,7 @@ public:
      * 100% = 1.0x, 150% = 1.5x, 200% = 2.0x, etc.
      */
     double getIncomeMultiplier() const {
-        return getUpgradeValue(UpgradeType::INCOME_BOOST) / 100.0;
+        return economy::incomeMultiplier(upgrades);
     }
     
     // ========================================================================
@@ -608,18 +595,14 @@ public:
      * getPassiveBoostFromPerks() - Calculate passive income multiplier from prestige perks
      */
     double getPassiveBoostFromPerks() const {
-        return 1.0 + (perkPassiveBoost * 0.05);  // +5% per level
+        return economy::passiveBoostFromPerk(perkPassiveBoost);
     }
     
     /*
      * getTotalGeneratorsOwned() - Count all generators owned (Phase C)
      */
     int getTotalGeneratorsOwned() const {
-        int total = 0;
-        for (const auto& gen : generators) {
-            total += gen.getOwned();
-        }
-        return total;
+        return economy::totalGeneratorsOwned(generators);
     }
     
     /*
@@ -629,62 +612,22 @@ public:
      * Threshold bonuses at 10/25/50/100 owned.
      */
     double getGeneratorSynergyMultiplier(int genIndex) const {
-        double multiplier = 1.0;
-        
-        if (genIndex < 0 || genIndex >= (int)generators.size()) return multiplier;
-        
-        const Generator& gen = generators[genIndex];
-        int owned = gen.getOwned();
-        
-        // Threshold bonuses for this generator
-        if (owned >= 10) multiplier *= 1.1;   // +10% at 10 owned
-        if (owned >= 25) multiplier *= 1.15;  // +15% more at 25
-        if (owned >= 50) multiplier *= 1.2;   // +20% more at 50
-        if (owned >= 100) multiplier *= 1.25; // +25% more at 100
-        
-        // Higher-tier generators boost this one (1% per owned)
-        for (int i = genIndex + 1; i < (int)generators.size(); i++) {
-            int higherOwned = generators[i].getOwned();
-            multiplier *= (1.0 + higherOwned * 0.01);
-        }
-        
-        return multiplier;
+        return economy::generatorSynergyMultiplier(generators, genIndex);
     }
     
     /*
      * getSpecializationMultiplier() - Get bonus from specialization (Phase C)
      */
     double getSpecializationMultiplier() const {
-        if (specializationId == 0) return 1.0;
-        return 1.5;  // +50% to specialized game type
+        return economy::specializationMultiplier(specializationId);
     }
     
     double getTotalPassiveIncome() const {
-        double total = 0.0;
-        
-        // Sum up generator income with synergy bonuses (Phase C)
-        for (size_t i = 0; i < generators.size(); i++) {
-            double baseIncome = generators[i].getIncomePerSecond();
-            double synergyMult = getGeneratorSynergyMultiplier(i);
-            total += baseIncome * synergyMult;
-        }
-        
-        // Apply Income Boost upgrade multiplier (Sprint 2)
-        // getIncomeMultiplier() returns 1.0 at base, up to 2.0 at max level
-        total *= getIncomeMultiplier();
-        
-        // Apply Prestige multiplier (Sprint 4)
-        // Each prestige level adds +10% to all income
-        total *= prestigeMultiplier;
-        
-        // Apply Achievement multiplier (Phase B)
-        // Each achievement adds +1% to all income
-        total *= achievementMultiplier;
-        
-        // Apply Prestige perk passive boost (Phase B)
-        total *= getPassiveBoostFromPerks();
-        
-        return total;
+        economy::PassiveIncomeInputs in;
+        in.prestigeMultiplier = prestigeMultiplier;
+        in.achievementMultiplier = achievementMultiplier;
+        in.perkPassiveBoost = perkPassiveBoost;
+        return economy::totalPassiveIncome(generators, upgrades, in);
     }
     
     /*
@@ -2327,14 +2270,10 @@ public:
         time_t now = time(0);
         double secondsOffline = difftime(now, savedTimestamp);
         
-        // Cap offline earnings (base 24 hours + 2 hours per perk level)
-        // This prevents exploits and keeps the game balanced
-        const double BASE_OFFLINE_HOURS = 24.0;
-        double maxOfflineHours = BASE_OFFLINE_HOURS + (perkOfflineCap * 2.0);
-        const double MAX_OFFLINE_SECONDS = maxOfflineHours * 3600.0;
-        if (secondsOffline > MAX_OFFLINE_SECONDS) {
-            secondsOffline = MAX_OFFLINE_SECONDS;
-        }
+        // Cap offline earnings (base 24 hours + 2 hours per perk level).
+        // This prevents exploits and also clamps a negative span, which happens
+        // when the save is stamped in the future after a clock change.
+        secondsOffline = economy::cappedOfflineSeconds(secondsOffline, perkOfflineCap);
         
         // Only apply if there's passive income and time has passed
         double passiveIncome = getTotalPassiveIncome();
@@ -2416,14 +2355,14 @@ public:
      * Formula: 100,000 * (2 ^ prestigeLevel)
      */
     double getPrestigeRequirement() const {
-        return 100000.0 * pow(2.0, prestigeLevel);
+        return economy::prestigeRequirement(prestigeLevel);
     }
     
     /*
      * canPrestige() - Check if player meets prestige requirements
      */
     bool canPrestige() const {
-        return lifetimeEarnings >= getPrestigeRequirement();
+        return economy::canPrestige(lifetimeEarnings, prestigeLevel);
     }
     
     /*
@@ -2698,17 +2637,14 @@ public:
      * Formula: base 5 stars + 1 per prestige level + bonus from lifetime earnings
      */
     int calculatePrestigeStars() const {
-        int baseStars = 5;
-        int levelBonus = prestigeLevel;
-        int earningsBonus = (int)(totalLifetimeEarnings / 1000000.0);  // 1 star per million
-        return baseStars + levelBonus + earningsBonus;
+        return economy::prestigeStars(prestigeLevel, totalLifetimeEarnings);
     }
     
     /*
      * getStartingMoneyFromPerk() - Calculate starting money based on perk level (Phase B)
      */
     double getStartingMoneyFromPerk() const {
-        return 100.0 + (perkStartingMoney * 50.0);  // +$50 per level
+        return economy::startingMoneyFromPerk(perkStartingMoney);
     }
     
     /*
@@ -2804,8 +2740,7 @@ public:
      * Each achievement gives +1% to all passive income.
      */
     void updateAchievementMultiplier() {
-        int count = getAchievementCount();
-        achievementMultiplier = 1.0 + (count * 0.01);
+        achievementMultiplier = economy::achievementMultiplier(getAchievementCount());
     }
     
     /*
@@ -2851,14 +2786,7 @@ public:
         
         // All Upgrades Maxed
         if (!achAllUpgrades) {
-            bool allMaxed = true;
-            for (const auto& upg : upgrades) {
-                if (!upg.isMaxed()) {
-                    allMaxed = false;
-                    break;
-                }
-            }
-            if (allMaxed && upgrades.size() > 0) {
+            if (economy::allUpgradesMaxed(upgrades)) {
                 achAllUpgrades = true;
                 showAchievement("Fully Upgraded", "Max out all upgrades! (+1% income)");
                 anyNewAchievement = true;
@@ -2978,56 +2906,15 @@ public:
      * getGeneratorCostMultiplier() - Get cost reduction from prestige perks (Phase B)
      */
     double getGeneratorCostMultiplier() const {
-        return 1.0 - (perkGeneratorDiscount * 0.05);  // -5% per level
+        return economy::generatorCostMultiplier(perkGeneratorDiscount);
     }
     
     double getGeneratorBulkCost(const Generator& gen, int amount) const {
-        if (amount <= 0) return 0.0;
-        double currentCost = gen.getCurrentCost();
-        double multiplier = gen.getCostMultiplier();
-        if (!std::isfinite(currentCost) || currentCost <= 0.0) return 0.0;
-        if (!std::isfinite(multiplier) || multiplier <= 1.0) return currentCost * amount;
-        double baseCost = currentCost * (pow(multiplier, amount) - 1.0) / (multiplier - 1.0);
-        // Apply generator discount perk (Phase B)
-        return baseCost * getGeneratorCostMultiplier();
+        return economy::bulkCost(gen, amount, getGeneratorCostMultiplier());
     }
 
     int getGeneratorMaxAffordable(const Generator& gen, double availableMoney) const {
-        if (!std::isfinite(availableMoney) || availableMoney <= 0.0) return 0;
-
-        double currentCost = gen.getCurrentCost();
-        double multiplier = gen.getCostMultiplier();
-        if (!std::isfinite(currentCost) || currentCost <= 0.0) return 0;
-
-        int owned = gen.getOwned();
-        if (owned >= INT_MAX) return 0;
-        int maxPossible = INT_MAX - owned;
-
-        if (!std::isfinite(multiplier) || multiplier <= 1.0) {
-            int n = (int)floor(availableMoney / currentCost);
-            if (n < 0) n = 0;
-            if (n > maxPossible) n = maxPossible;
-            return n;
-        }
-
-        double a = availableMoney * (multiplier - 1.0) / currentCost + 1.0;
-        if (!std::isfinite(a) || a <= 1.0) return 0;
-
-        double nExact = log(a) / log(multiplier);
-        if (!std::isfinite(nExact)) return 0;
-
-        int n = (int)floor(nExact);
-        if (n < 0) n = 0;
-        if (n > maxPossible) n = maxPossible;
-
-        while (n > 0 && getGeneratorBulkCost(gen, n) > availableMoney) {
-            n--;
-        }
-        while (n < maxPossible && getGeneratorBulkCost(gen, n + 1) <= availableMoney) {
-            n++;
-        }
-
-        return n;
+        return economy::maxAffordable(gen, availableMoney, getGeneratorCostMultiplier());
     }
     
     /*

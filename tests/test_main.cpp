@@ -24,6 +24,9 @@
 #include "core/rng.h"
 #include "core/deck.h"
 #include "core/save_path.h"
+#include "core/generator.h"
+#include "core/upgrade.h"
+#include "core/economy.h"
 
 // ============================================================================
 // MINIMAL TEST HARNESS
@@ -376,6 +379,317 @@ static void testDeck() {
 }
 
 // ============================================================================
+// ECONOMY
+// ============================================================================
+
+// A stand-in for the real generator list: cheap tier-0, pricier tier-1.
+static std::vector<Generator> makeGenerators() {
+    std::vector<Generator> gens;
+    gens.push_back(Generator("Slot Machine", "SM", "d", "i", 0.1, 10.0, 1.15));
+    gens.push_back(Generator("Card Table", "CT", "d", "i", 1.0, 100.0, 1.15));
+    gens.push_back(Generator("Roulette", "RW", "d", "i", 8.0, 1100.0, 1.15));
+    return gens;
+}
+
+static std::vector<Upgrade> makeUpgrades() {
+    std::vector<Upgrade> upgrades;
+    upgrades.push_back(Upgrade("Lucky Wheel", "d", UpgradeType::WHEEL_CHANCE,
+                               5, 100, 2.5, 50.0, 2.0));
+    upgrades.push_back(Upgrade("Income Boost", "d", UpgradeType::INCOME_BOOST,
+                               5, 1000, 3.0, 100.0, 20.0));
+    return upgrades;
+}
+
+/*
+ * Independent reference implementation of bulk pricing: literally buy the units
+ * one at a time. If the closed-form geometric series in economy::bulkCost() is
+ * wrong, these two disagree.
+ */
+static double naiveBulkCost(const Generator& gen, int amount, double discount) {
+    double total = 0.0;
+    for (int i = 0; i < amount; ++i) {
+        total += gen.getCostAtOwned(gen.getOwned() + i);
+    }
+    return total * discount;
+}
+
+static void testEconomy() {
+    suite("core/economy.h - upgrades, perks and prestige");
+
+    std::vector<Upgrade> upgrades = makeUpgrades();
+
+    checkNear(economy::upgradeValue(upgrades, UpgradeType::WHEEL_CHANCE), 50.0, 1e-9,
+              "upgrade value at level 0 is the base value");
+    upgrades[0].setLevel(3);
+    checkNear(economy::upgradeValue(upgrades, UpgradeType::WHEEL_CHANCE), 56.0, 1e-9,
+              "upgrade value scales with level (50 + 3*2)");
+    upgrades[0].setLevel(999);
+    checkNear(economy::upgradeValue(upgrades, UpgradeType::WHEEL_CHANCE), 60.0, 1e-9,
+              "setLevel clamps at maxLevel, so value caps at 60");
+
+    // A type absent from the list falls back to its documented base.
+    checkNear(economy::upgradeValue(upgrades, UpgradeType::BLACKJACK_PAYOUT), 2.0, 1e-9,
+              "missing payout upgrade defaults to its base multiplier, not 0");
+
+    checkNear(economy::incomeMultiplier(upgrades), 1.0, 1e-9,
+              "income multiplier is 1.0 at base (100%)");
+    upgrades[1].setLevel(5);
+    checkNear(economy::incomeMultiplier(upgrades), 2.0, 1e-9,
+              "income multiplier is 2.0 when fully upgraded (200%)");
+
+    check(!economy::allUpgradesMaxed(makeUpgrades()), "fresh upgrades are not all maxed");
+    {
+        std::vector<Upgrade> maxed = makeUpgrades();
+        for (std::size_t i = 0; i < maxed.size(); ++i) maxed[i].setLevel(99);
+        check(economy::allUpgradesMaxed(maxed), "fully levelled upgrades are all maxed");
+    }
+    check(!economy::allUpgradesMaxed(std::vector<Upgrade>()),
+          "an empty upgrade list is not 'all maxed'");
+
+    // Achievement and perk scaling
+    checkNear(economy::achievementMultiplier(0), 1.00, 1e-9, "no achievements is 1.00x");
+    checkNear(economy::achievementMultiplier(8), 1.08, 1e-9, "8 achievements is 1.08x");
+    checkNear(economy::achievementMultiplier(-3), 1.00, 1e-9,
+              "negative achievement count clamps to 1.00x");
+
+    checkNear(economy::passiveBoostFromPerk(0), 1.00, 1e-9, "no passive perk is 1.00x");
+    checkNear(economy::passiveBoostFromPerk(4), 1.20, 1e-9, "4 passive perk levels is 1.20x");
+    checkNear(economy::startingMoneyFromPerk(0), 100.0, 1e-9, "base starting money is $100");
+    checkNear(economy::startingMoneyFromPerk(3), 250.0, 1e-9, "3 perk levels is $250");
+
+    checkNear(economy::generatorCostMultiplier(0), 1.00, 1e-9, "no discount perk is 1.00x");
+    checkNear(economy::generatorCostMultiplier(4), 0.80, 1e-9, "4 discount levels is 0.80x");
+    // 20 levels would be exactly 0.0, and beyond that negative: generators would
+    // become free, then pay the player to buy them.
+    check(economy::generatorCostMultiplier(20) > 0.0,
+          "discount multiplier never reaches zero");
+    check(economy::generatorCostMultiplier(500) > 0.0,
+          "absurd discount level still yields a positive multiplier");
+
+    // Offline capping
+    checkNear(economy::maxOfflineSeconds(0), 86400.0, 1e-6, "base offline cap is 24h");
+    checkNear(economy::maxOfflineSeconds(3), 86400.0 + 3 * 7200.0, 1e-6,
+              "each perk level adds 2h to the offline cap");
+    checkNear(economy::cappedOfflineSeconds(3600.0, 0), 3600.0, 1e-6,
+              "an hour offline is under the cap and passes through");
+    checkNear(economy::cappedOfflineSeconds(1e9, 0), 86400.0, 1e-6,
+              "a huge span is clamped to the cap");
+    checkNear(economy::cappedOfflineSeconds(-500.0, 0), 0.0, 1e-9,
+              "a negative span (future-dated save) yields zero, not negative earnings");
+    checkNear(economy::cappedOfflineSeconds(std::sqrt(-1.0), 0), 0.0, 1e-9,
+              "a NaN span yields zero");
+
+    // Prestige
+    checkNear(economy::prestigeRequirement(0), 100000.0, 1e-6, "first prestige needs $100K");
+    checkNear(economy::prestigeRequirement(3), 800000.0, 1e-6, "fourth prestige needs $800K");
+    check(economy::canPrestige(100000.0, 0), "exactly meeting the requirement allows prestige");
+    check(!economy::canPrestige(99999.0, 0), "just short does not allow prestige");
+
+    checkEqual(economy::prestigeStars(0, 0.0), 5, "base prestige award is 5 stars");
+    checkEqual(economy::prestigeStars(2, 0.0), 7, "each prestige level adds a star");
+    checkEqual(economy::prestigeStars(0, 3.7e6), 8, "one star per full million earned");
+    // The old cast overflowed to a negative star count on an absurd balance.
+    check(economy::prestigeStars(0, 1e30) > 0,
+          "an absurd balance saturates instead of overflowing to negative stars");
+
+    suite("core/economy.h - generators and synergy");
+
+    std::vector<Generator> gens = makeGenerators();
+    checkEqual(economy::totalGeneratorsOwned(gens), 0, "fresh generators own nothing");
+    gens[0].setOwned(5);
+    gens[1].setOwned(3);
+    checkEqual(economy::totalGeneratorsOwned(gens), 8, "owned counts sum across generators");
+
+    // Synergy: out-of-range indices must be inert, not crash.
+    checkNear(economy::generatorSynergyMultiplier(gens, -1), 1.0, 1e-9,
+              "negative generator index yields no synergy");
+    checkNear(economy::generatorSynergyMultiplier(gens, 99), 1.0, 1e-9,
+              "out-of-range generator index yields no synergy");
+
+    {
+        // Isolate threshold behavior: a single generator, no higher tiers.
+        std::vector<Generator> solo;
+        solo.push_back(Generator("Solo", "S", "d", "i", 1.0, 10.0, 1.15));
+
+        solo[0].setOwned(9);
+        checkNear(economy::generatorSynergyMultiplier(solo, 0), 1.0, 1e-9,
+                  "below 10 owned there is no threshold bonus");
+        solo[0].setOwned(10);
+        checkNear(economy::generatorSynergyMultiplier(solo, 0), 1.1, 1e-9,
+                  "10 owned gives exactly +10%");
+        solo[0].setOwned(25);
+        checkNear(economy::generatorSynergyMultiplier(solo, 0), 1.1 * 1.15, 1e-9,
+                  "25 owned stacks the 10 and 25 thresholds");
+        solo[0].setOwned(50);
+        checkNear(economy::generatorSynergyMultiplier(solo, 0), 1.1 * 1.15 * 1.2, 1e-9,
+                  "50 owned stacks three thresholds");
+        solo[0].setOwned(100);
+        checkNear(economy::generatorSynergyMultiplier(solo, 0),
+                  1.1 * 1.15 * 1.2 * 1.25, 1e-9,
+                  "100 owned stacks all four thresholds");
+    }
+
+    {
+        // Higher tiers boost lower ones by 1% per unit owned.
+        std::vector<Generator> tiered = makeGenerators();
+        tiered[1].setOwned(10);
+        checkNear(economy::generatorSynergyMultiplier(tiered, 0), 1.10, 1e-9,
+                  "10 of a higher tier boosts the lower tier by 10%");
+        checkNear(economy::generatorSynergyMultiplier(tiered, 2), 1.0, 1e-9,
+                  "the top tier receives no boost from below");
+    }
+
+    // Specialization
+    checkNear(economy::specializationMultiplier(0), 1.0, 1e-9, "no specialization is 1.0x");
+    checkNear(economy::specializationMultiplier(3), 1.5, 1e-9, "a specialization is 1.5x");
+
+    // Passive income composition
+    {
+        std::vector<Generator> g = makeGenerators();
+        std::vector<Upgrade> u = makeUpgrades();
+        g[0].setOwned(1);   // 0.1/sec, no thresholds, no higher tiers owned
+
+        economy::PassiveIncomeInputs in;
+        checkNear(economy::totalPassiveIncome(g, u, in), 0.1, 1e-9,
+                  "one basic generator yields its base income");
+
+        in.prestigeMultiplier = 2.0;
+        checkNear(economy::totalPassiveIncome(g, u, in), 0.2, 1e-9,
+                  "prestige multiplier scales passive income");
+
+        in.prestigeMultiplier = 1.0;
+        in.achievementMultiplier = 1.08;
+        checkNear(economy::totalPassiveIncome(g, u, in), 0.108, 1e-9,
+                  "achievement multiplier scales passive income");
+
+        in.achievementMultiplier = 1.0;
+        in.perkPassiveBoost = 2;
+        checkNear(economy::totalPassiveIncome(g, u, in), 0.11, 1e-9,
+                  "passive boost perk scales passive income");
+
+        checkNear(economy::totalPassiveIncome(std::vector<Generator>(), u,
+                                             economy::PassiveIncomeInputs()),
+                  0.0, 1e-9, "no generators means no passive income");
+    }
+
+    suite("core/economy.h - bulk purchasing");
+
+    {
+        Generator gen("Slot Machine", "SM", "d", "i", 0.1, 10.0, 1.15);
+
+        checkNear(economy::bulkCost(gen, 0, 1.0), 0.0, 1e-9, "buying zero costs nothing");
+        checkNear(economy::bulkCost(gen, -5, 1.0), 0.0, 1e-9, "buying a negative amount costs nothing");
+        checkNear(economy::bulkCost(gen, 1, 1.0), 10.0, 1e-9, "first unit costs the base cost");
+
+        // Cross-check the closed-form series against buying one at a time.
+        bool seriesMatches = true;
+        for (int owned = 0; owned <= 40 && seriesMatches; owned += 8) {
+            gen.setOwned(owned);
+            for (int amount = 1; amount <= 25; ++amount) {
+                const double closed = economy::bulkCost(gen, amount, 1.0);
+                const double naive = naiveBulkCost(gen, amount, 1.0);
+                if (std::fabs(closed - naive) > 1e-6 * std::fabs(naive) + 1e-9) {
+                    seriesMatches = false;
+                    break;
+                }
+            }
+        }
+        check(seriesMatches, "closed-form bulk cost matches buying one at a time");
+
+        gen.setOwned(0);
+        checkNear(economy::bulkCost(gen, 10, 0.8),
+                  economy::bulkCost(gen, 10, 1.0) * 0.8, 1e-9,
+                  "the discount scales bulk cost linearly");
+
+        // A flat-priced generator (multiplier 1.0) would divide by zero in the
+        // geometric series and must take the flat path instead.
+        Generator flat("Flat", "F", "d", "i", 1.0, 5.0, 1.0);
+        checkNear(economy::bulkCost(flat, 7, 1.0), 35.0, 1e-9,
+                  "a multiplier of 1.0 prices linearly without dividing by zero");
+    }
+
+    {
+        Generator gen("Slot Machine", "SM", "d", "i", 0.1, 10.0, 1.15);
+
+        checkEqual(economy::maxAffordable(gen, 0.0, 1.0), 0, "no money buys nothing");
+        checkEqual(economy::maxAffordable(gen, -100.0, 1.0), 0, "negative money buys nothing");
+        checkEqual(economy::maxAffordable(gen, 9.99, 1.0), 0, "not quite enough buys nothing");
+        checkEqual(economy::maxAffordable(gen, 10.0, 1.0), 1, "exactly enough buys one");
+
+        /*
+         * The invariant that matters: whatever maxAffordable() returns must be
+         * affordable, and one more must not be. This is what catches off-by-one
+         * errors in the log-inversion, at every budget and discount.
+         */
+        bool invariantHolds = true;
+        std::string firstFailure;
+        const double budgets[] = {1.0, 10.0, 10.5, 99.0, 1000.0, 12345.67, 1e6, 1e9, 1e15};
+        const double discounts[] = {1.0, 0.95, 0.8, 0.5, 0.05};
+
+        for (int b = 0; b < 9 && invariantHolds; ++b) {
+            for (int d = 0; d < 5 && invariantHolds; ++d) {
+                for (int owned = 0; owned <= 60; owned += 20) {
+                    gen.setOwned(owned);
+                    const double budget = budgets[b];
+                    const double disc = discounts[d];
+
+                    const int n = economy::maxAffordable(gen, budget, disc);
+                    if (n < 0) { invariantHolds = false; firstFailure = "negative count"; break; }
+
+                    if (n > 0 && economy::bulkCost(gen, n, disc) > budget) {
+                        invariantHolds = false;
+                        firstFailure = "returned an unaffordable count";
+                        break;
+                    }
+                    if (economy::bulkCost(gen, n + 1, disc) <= budget) {
+                        invariantHolds = false;
+                        firstFailure = "could have afforded one more";
+                        break;
+                    }
+                }
+            }
+        }
+        check(invariantHolds,
+              invariantHolds ? "maxAffordable is exact across budgets and discounts"
+                             : "maxAffordable is exact across budgets and discounts ["
+                               + firstFailure + "]");
+
+        // A bigger discount must never let you afford fewer units.
+        gen.setOwned(0);
+        check(economy::maxAffordable(gen, 1000.0, 0.5) >=
+              economy::maxAffordable(gen, 1000.0, 1.0),
+              "a discount never reduces how many you can afford");
+
+        // MAX_OWNED is an in-class constant with no out-of-line definition, so
+        // copy it into a local rather than binding it to a const reference.
+        const int cap = Generator::MAX_OWNED;
+
+        /*
+         * With 1.15x scaling, cost grows fast enough that even a $1e300 budget
+         * buys only a few thousand units - reaching MAX_OWNED would take roughly
+         * 1e6000. So the exponential case is bounded by its own pricing, and the
+         * cap is only reachable under flat pricing.
+         */
+        gen.setOwned(0);
+        const int hugeBudget = economy::maxAffordable(gen, 1e300, 1.0);
+        check(hugeBudget > 0 && hugeBudget < cap,
+              "an enormous budget is bounded by exponential pricing, well under the cap");
+        check(std::isfinite(economy::bulkCost(gen, hugeBudget, 1.0)),
+              "the cost of that many units is still a finite number");
+
+        gen.setOwned(cap);
+        checkEqual(economy::maxAffordable(gen, 1e300, 1.0), 0,
+                   "a maxed generator can afford no more");
+
+        Generator flat("Flat", "F", "d", "i", 1.0, 5.0, 1.0);
+        checkEqual(economy::maxAffordable(flat, 52.0, 1.0), 10,
+                   "flat pricing divides evenly");
+        checkEqual(economy::maxAffordable(flat, 1e300, 1.0), cap,
+                   "flat pricing with an unlimited budget is capped at MAX_OWNED");
+    }
+}
+
+// ============================================================================
 // SAVE PATH
 // ============================================================================
 
@@ -422,6 +736,7 @@ int main() {
     testMoney();
     testRng();
     testDeck();
+    testEconomy();
     testSavePath();
 
     std::cout << "\n" << std::string(60, '-') << "\n";
