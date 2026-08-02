@@ -86,7 +86,6 @@ make uninstall
 
 ```
 lucky-spin-casino/
-├── gambling_game.cpp    # Main game source code
 ├── Makefile             # Build configuration
 ├── README.md            # This file
 ├── LICENSE              # MIT license
@@ -94,6 +93,16 @@ lucky-spin-casino/
 │   ├── GDD.md           # Game Design Document
 │   └── GAMEPLAY_IMPROVEMENTS.md
 ├── src/
+│   ├── main.cpp         # Program entry point
+│   ├── gambling_game.h  # GamblingGame class declaration
+│   ├── menu.h           # Main menu table (MenuAction/MenuEntry)
+│   ├── game_init.cpp    # Construction + generator/upgrade definitions
+│   ├── game_economy.cpp # Economy glue (delegates to core/economy.h)
+│   ├── game_display.cpp # Terminal rendering (header, stats, menus)
+│   ├── game_games.cpp   # Playable games (wheel, slots, blackjack, roulette)
+│   ├── game_shops.cpp   # Shops, prestige, specialization
+│   ├── game_save.cpp    # Persistence (atomic save/load, checksum)
+│   ├── game_loop.cpp    # Main loop + menu dispatch
 │   ├── colors.h         # ANSI color definitions
 │   ├── unicode.h        # Unicode codepoint constants
 │   ├── symbols.h        # Game-facing symbol sets (Symbols/Cards/UI)

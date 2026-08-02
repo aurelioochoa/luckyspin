@@ -5,7 +5,10 @@ INCLUDES = -I./src
 CXXFLAGS = $(CXXSTD) $(WARNINGS) -O2 $(INCLUDES)
 
 TARGET = gambling_game
-SRC = gambling_game.cpp
+SRC = src/game_init.cpp src/game_economy.cpp src/game_display.cpp \
+      src/game_games.cpp src/game_shops.cpp src/game_save.cpp \
+      src/game_loop.cpp src/main.cpp
+OBJ = $(SRC:.cpp=.o)
 
 TEST_TARGET = tests/run_tests
 TEST_SRC = tests/test_main.cpp
@@ -17,14 +20,16 @@ COMMAND_NAME = lucky-spin
 
 all: $(TARGET)
 
-# -MMD -MP emits a .d file listing every header the source actually includes,
-# so edits to src/*.h and src/core/*.h trigger a rebuild automatically. This
-# replaces the old hand-maintained HEADERS list, which had drifted out of date.
-$(TARGET): $(SRC)
-	$(CXX) $(CXXFLAGS) -MMD -MP -o $(TARGET) $(SRC)
+# Each .cpp compiles to a .o; -MMD -MP emits a .d file listing every header
+# the source actually includes, so edits to src/*.h and src/core/*.h trigger
+# a rebuild automatically. Unchanged objects are not recompiled.
+$(TARGET): $(OBJ)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJ)
 
--include $(TARGET).d
--include gambling_game.d
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+-include $(SRC:.cpp=.d)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -67,7 +72,7 @@ clean:
 	rm -f $(TARGET) $(TARGET)_debug $(TARGET)_asan
 	rm -f test_unicode
 	rm -f $(TEST_TARGET) tests/run_tests_asan
-	rm -f *.o *.d tests/*.d
+	rm -f src/*.o src/*.d *.o *.d tests/*.d
 
 run: $(TARGET)
 	./$(TARGET)
