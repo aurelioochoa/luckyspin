@@ -57,6 +57,7 @@
 #include "core/upgrade.h"    // Upgrade, UpgradeType
 #include "core/economy.h"    // economy:: - headless money math
 #include "core/banner.h"     // banner::rows() - aligned marquee header
+#include "core/checksum.h"   // checksum::fnv1a() - save integrity check
 
 // Using the standard namespace so we don't have to write "std::" everywhere
 // In larger projects, it's often better to use "std::" explicitly
@@ -1958,70 +1959,80 @@ public:
          * the previous save intact instead of a half-written one.
          */
         const string temp = tempPath();
-        ofstream file(temp.c_str());
-        
-        if (!file.is_open()) {
-            cout << "\n  " << Color::RED << UI::CROSS_X << " Failed to save game!" << Color::RESET;
-            return false;
-        }
+
+        // Built in memory first so the checksum below can cover every byte
+        // of the body exactly as it will land on disk.
+        ostringstream body;
         
         // Write save file header with version
-        file << "LUCKY_SPIN_SAVE_V1" << endl;
-        file << "timestamp=" << time(0) << endl;
+        body << "LUCKY_SPIN_SAVE_V1" << endl;
+        body << "timestamp=" << time(0) << endl;
         
         // Save player stats
-        file << "money=" << fixed << setprecision(2) << money << endl;
-        file << "betAmount=" << fixed << setprecision(2) << betAmount << endl;
-        file << "round=" << round << endl;
-        file << "totalWins=" << totalWins << endl;
-        file << "totalLosses=" << totalLosses << endl;
-        file << "peakMoney=" << fixed << setprecision(2) << peakMoney << endl;
-        file << "lifetimeEarnings=" << fixed << setprecision(2) << lifetimeEarnings << endl;
+        body << "money=" << fixed << setprecision(2) << money << endl;
+        body << "betAmount=" << fixed << setprecision(2) << betAmount << endl;
+        body << "round=" << round << endl;
+        body << "totalWins=" << totalWins << endl;
+        body << "totalLosses=" << totalLosses << endl;
+        body << "peakMoney=" << fixed << setprecision(2) << peakMoney << endl;
+        body << "lifetimeEarnings=" << fixed << setprecision(2) << lifetimeEarnings << endl;
         
         // Save generator owned counts
         // Format: gen_0=5, gen_1=3, etc.
         for (size_t i = 0; i < generators.size(); i++) {
-            file << "gen_" << i << "=" << generators[i].getOwned() << endl;
+            body << "gen_" << i << "=" << generators[i].getOwned() << endl;
         }
         
         // Save upgrade levels
         // Format: upg_0=2, upg_1=1, etc.
         for (size_t i = 0; i < upgrades.size(); i++) {
-            file << "upg_" << i << "=" << upgrades[i].getCurrentLevel() << endl;
+            body << "upg_" << i << "=" << upgrades[i].getCurrentLevel() << endl;
         }
         
         // Save prestige data (Sprint 4)
-        file << "prestigeLevel=" << prestigeLevel << endl;
-        file << "prestigeMultiplier=" << fixed << setprecision(2) << prestigeMultiplier << endl;
-        file << "totalLifetimeEarnings=" << fixed << setprecision(2) << totalLifetimeEarnings << endl;
+        body << "prestigeLevel=" << prestigeLevel << endl;
+        body << "prestigeMultiplier=" << fixed << setprecision(2) << prestigeMultiplier << endl;
+        body << "totalLifetimeEarnings=" << fixed << setprecision(2) << totalLifetimeEarnings << endl;
         
         // Save achievements (Sprint 4)
-        file << "achFirstWin=" << achFirstWin << endl;
-        file << "achHighRoller=" << achHighRoller << endl;
-        file << "achMillionaire=" << achMillionaire << endl;
-        file << "achLuckyStreak=" << achLuckyStreak << endl;
-        file << "achGenerator10=" << achGenerator10 << endl;
-        file << "achAllUpgrades=" << achAllUpgrades << endl;
-        file << "achPrestige1=" << achPrestige1 << endl;
-        file << "achPrestige5=" << achPrestige5 << endl;
-        file << "currentWinStreak=" << currentWinStreak << endl;
+        body << "achFirstWin=" << achFirstWin << endl;
+        body << "achHighRoller=" << achHighRoller << endl;
+        body << "achMillionaire=" << achMillionaire << endl;
+        body << "achLuckyStreak=" << achLuckyStreak << endl;
+        body << "achGenerator10=" << achGenerator10 << endl;
+        body << "achAllUpgrades=" << achAllUpgrades << endl;
+        body << "achPrestige1=" << achPrestige1 << endl;
+        body << "achPrestige5=" << achPrestige5 << endl;
+        body << "currentWinStreak=" << currentWinStreak << endl;
         
         // Save Phase B data
-        file << "achievementMultiplier=" << fixed << setprecision(4) << achievementMultiplier << endl;
-        file << "prestigeStars=" << prestigeStars << endl;
-        file << "perkStartingMoney=" << perkStartingMoney << endl;
-        file << "perkGeneratorDiscount=" << perkGeneratorDiscount << endl;
-        file << "perkOfflineCap=" << perkOfflineCap << endl;
-        file << "perkPassiveBoost=" << perkPassiveBoost << endl;
+        body << "achievementMultiplier=" << fixed << setprecision(4) << achievementMultiplier << endl;
+        body << "prestigeStars=" << prestigeStars << endl;
+        body << "perkStartingMoney=" << perkStartingMoney << endl;
+        body << "perkGeneratorDiscount=" << perkGeneratorDiscount << endl;
+        body << "perkOfflineCap=" << perkOfflineCap << endl;
+        body << "perkPassiveBoost=" << perkPassiveBoost << endl;
         
         // Save Phase C data
-        file << "specializationId=" << specializationId << endl;
-        file << "interestUnlocked=" << interestUnlocked << endl;
-        file << "interestRate=" << fixed << setprecision(6) << interestRate << endl;
+        body << "specializationId=" << specializationId << endl;
+        body << "interestUnlocked=" << interestUnlocked << endl;
+        body << "interestRate=" << fixed << setprecision(6) << interestRate << endl;
         for (int i = 0; i < 10; i++) {
-            file << "milestone_" << i << "=" << milestoneUnlocked[i] << endl;
+            body << "milestone_" << i << "=" << milestoneUnlocked[i] << endl;
         }
         
+        // Integrity trailer: FNV-1a over every byte written above. The loader
+        // verifies it and warns on mismatch, but still loads (warn-only).
+        const string content = body.str();
+        body << "checksum=" << checksum::toHex(checksum::fnv1a(content)) << endl;
+
+        ofstream file(temp.c_str());
+        if (!file.is_open()) {
+            cout << "\n  " << Color::RED << UI::CROSS_X << " Failed to save game!" << Color::RESET;
+            return false;
+        }
+        file << body.str();
+
         // Check for write errors (e.g. disk full) BEFORE replacing the old save.
         file.flush();
         const bool writeOk = file.good();
@@ -2179,20 +2190,50 @@ public:
      */
     bool loadFrom(const string& path, time_t& savedTimestamp) {
         ifstream file(path.c_str());
-        
+
         if (!file.is_open()) {
             return false;
         }
-        
+
+        // Read raw bytes so the checksum can be verified over exactly what
+        // saveGame() hashed, newline-for-newline.
+        ostringstream raw;
+        raw << file.rdbuf();
+        const string content = raw.str();
+        file.close();
+
+        istringstream lines(content);
         string line;
-        
+
         // Read and verify header
-        if (!getline(file, line) || line != "LUCKY_SPIN_SAVE_V1") {
+        if (!getline(lines, line) || line != "LUCKY_SPIN_SAVE_V1") {
             return false;  // Invalid or incompatible save file
         }
-        
+
+        // Verify the integrity trailer if present. Pre-checksum saves have no
+        // trailer and load silently; a mismatch warns but still loads, so a
+        // corrupt or hand-edited file never locks the player out.
+        const string trailerTag = "\nchecksum=";
+        const size_t trailerPos = content.rfind(trailerTag);
+        if (trailerPos != string::npos) {
+            string stored = content.substr(trailerPos + trailerTag.size());
+            while (!stored.empty() &&
+                   (stored[stored.size() - 1] == '\n' || stored[stored.size() - 1] == '\r')) {
+                stored.erase(stored.size() - 1);
+            }
+            uint64_t expected = 0;
+            const string hashedBody = content.substr(0, trailerPos + 1);
+            if (!checksum::fromHex(stored, expected) ||
+                checksum::fnv1a(hashedBody) != expected) {
+                cout << "\n  " << Color::YELLOW << UI::CROSS_X
+                     << " Save file checksum mismatch - it may be corrupt or edited."
+                     << " Loading anyway." << Color::RESET << "\n";
+                usleep(1500000);
+            }
+        }
+
         // Parse each line
-        while (getline(file, line)) {
+        while (getline(lines, line)) {
             // Strip a trailing CR so files touched on Windows still load
             if (!line.empty() && line[line.size() - 1] == '\r') {
                 line.erase(line.size() - 1);

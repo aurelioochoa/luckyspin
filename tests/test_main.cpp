@@ -7,6 +7,7 @@
  *   - rng.h        : distribution and fractional probability handling
  *   - deck.h       : card values, hand scoring, shoe integrity
  *   - save_path.h  : XDG path resolution
+ *   - checksum.h   : FNV-1a save integrity hash
  *
  * Deliberately dependency-free (no gtest) so `make test` works on a bare
  * toolchain. Run with: make test
@@ -28,6 +29,7 @@
 #include "core/upgrade.h"
 #include "core/economy.h"
 #include "core/banner.h"
+#include "core/checksum.h"
 
 // ============================================================================
 // MINIMAL TEST HARNESS
@@ -799,6 +801,55 @@ static void testSavePath() {
 }
 
 // ============================================================================
+// CHECKSUM
+// ============================================================================
+
+static void testChecksum() {
+    suite("core/checksum.h - FNV-1a integrity hash");
+
+    // Reference vectors for FNV-1a 64-bit.
+    checkEqual(checksum::fnv1a(""),  (uint64_t)14695981039346656037ULL, "empty string hashes to the offset basis");
+    checkEqual(checksum::fnv1a("a"), (uint64_t)0xaf63dc4c8601ec8cULL,  "known vector: 'a'");
+    checkEqual(checksum::fnv1a("foobar"), (uint64_t)0x85944171f73967e8ULL, "known vector: 'foobar'");
+
+    // Hex encoding is stable and round-trips.
+    checkEqual(checksum::toHex(0xaf63dc4c8601ec8cULL), std::string("af63dc4c8601ec8c"),
+               "toHex produces lowercase zero-padded hex");
+    checkEqual(checksum::toHex(0ULL), std::string("0000000000000000"), "toHex zero-pads to 16 digits");
+
+    uint64_t roundTrip = 0;
+    check(checksum::fromHex("af63dc4c8601ec8c", roundTrip), "fromHex parses valid hex");
+    checkEqual(roundTrip, (uint64_t)0xaf63dc4c8601ec8cULL, "fromHex/toHex round-trip");
+    check(checksum::fromHex("AF63DC4C8601EC8C", roundTrip), "fromHex accepts uppercase");
+    check(!checksum::fromHex("", roundTrip), "fromHex rejects empty input");
+    check(!checksum::fromHex("zz", roundTrip), "fromHex rejects non-hex input");
+
+    // Save-file scenario: the trailer covers the body byte-for-byte, so any
+    // edit flips the hash, while an untouched body verifies cleanly.
+    const std::string saveBody =
+        "LUCKY_SPIN_SAVE_V1\n"
+        "timestamp=1754150400\n"
+        "money=12345.67\n"
+        "gen_0=3\n";
+    const std::string trailer = "checksum=" + checksum::toHex(checksum::fnv1a(saveBody)) + "\n";
+    const std::string onDisk = saveBody + trailer;
+
+    const std::string tag = "\nchecksum=";
+    const size_t pos = onDisk.rfind(tag);
+    check(pos != std::string::npos, "trailer is locatable in the written file");
+    checkEqual(onDisk.substr(0, pos + 1), saveBody, "hashed region is exactly the body");
+
+    uint64_t expected = 0;
+    check(checksum::fromHex(onDisk.substr(pos + tag.size(), 16), expected), "trailer hex parses");
+    checkEqual(checksum::fnv1a(onDisk.substr(0, pos + 1)), expected, "untouched save verifies");
+
+    std::string tampered = onDisk;
+    const size_t moneyPos = tampered.find("12345.67");
+    tampered.replace(moneyPos, 8, "99999.99");
+    check(checksum::fnv1a(tampered.substr(0, pos + 1)) != expected, "edited body fails verification");
+}
+
+// ============================================================================
 // MAIN
 // ============================================================================
 
@@ -812,6 +863,7 @@ int main() {
     testEconomy();
     testBanner();
     testSavePath();
+    testChecksum();
 
     std::cout << "\n" << std::string(60, '-') << "\n";
     if (g_failures == 0) {
