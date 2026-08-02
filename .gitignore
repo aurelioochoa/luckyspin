@@ -16,3 +16,4 @@ lucky_spin_save.txt.tmp
 *.swp
 *~
 .DS_Store
+gambling_game_asan
