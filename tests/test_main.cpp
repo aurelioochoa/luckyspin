@@ -27,6 +27,7 @@
 #include "core/generator.h"
 #include "core/upgrade.h"
 #include "core/economy.h"
+#include "core/banner.h"
 
 // ============================================================================
 // MINIMAL TEST HARNESS
@@ -690,6 +691,78 @@ static void testEconomy() {
 }
 
 // ============================================================================
+// BANNER
+// ============================================================================
+
+static int countOccurrences(const std::string& haystack, const std::string& needle) {
+    int count = 0;
+    std::string::size_type pos = 0;
+    while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
+static void testBanner() {
+    suite("core/banner.h - marquee header alignment");
+
+    const banner::Colors plain;  // no colors: pure text
+
+    /*
+     * The regression this guards: the title row used to be hand-padded as if
+     * the slot emoji were 1 column wide, leaving it 7 columns short of the
+     * other rows. Every row of every frame must span the same width.
+     */
+    const int expectedWidth = banner::INTERIOR_WIDTH + 2;  // two borders
+
+    bool allFramesAligned = true;
+    for (int frame = 0; frame < 8; ++frame) {
+        const std::vector<std::string> rows = banner::rows(frame, plain);
+        checkEqual((int)rows.size(), 5, "header is five rows");  // cheap, idempotent
+        for (std::size_t r = 0; r < rows.size(); ++r) {
+            if (text::displayWidth(rows[r]) != expectedWidth) {
+                allFramesAligned = false;
+            }
+        }
+    }
+    check(allFramesAligned, "every row of every frame spans the same width");
+
+    const std::vector<std::string> rows = banner::rows(0, plain);
+    check(rows[0].find("LUCKY SPIN CASINO") == std::string::npos,
+          "top border holds no text");
+    check(rows[2].find("LUCKY SPIN CASINO") != std::string::npos,
+          "the title is on the middle row");
+    check(rows[1] != rows[2] && rows[1] != rows[3],
+          "star rows and title row are distinct");
+
+    // The marquee chase: one lit star per cluster, mirrored, so two per row.
+    checkEqual(countOccurrences(rows[1], "\xE2\x98\x85"), 2,
+               "top star row lights one star in each mirrored cluster");
+    checkEqual(countOccurrences(rows[3], "\xE2\x98\x85"), 2,
+               "bottom star row lights one star in each mirrored cluster");
+
+    // And the lit star moves as the frame advances.
+    check(banner::rows(0, plain)[1] != banner::rows(1, plain)[1],
+          "the lit star advances with the frame");
+
+    // Colors are zero-width, so a colored banner aligns identically.
+    banner::Colors colored;
+    colored.border = "\033[33m";
+    colored.star = "\033[31m";
+    colored.title = "\033[1;33m";
+    colored.reset = "\033[0m";
+    bool coloredAligned = true;
+    for (int frame = 0; frame < 4; ++frame) {
+        const std::vector<std::string> crows = banner::rows(frame, colored);
+        for (std::size_t r = 0; r < crows.size(); ++r) {
+            if (text::displayWidth(crows[r]) != expectedWidth) coloredAligned = false;
+        }
+    }
+    check(coloredAligned, "ANSI colors do not change the row widths");
+}
+
+// ============================================================================
 // SAVE PATH
 // ============================================================================
 
@@ -737,6 +810,7 @@ int main() {
     testRng();
     testDeck();
     testEconomy();
+    testBanner();
     testSavePath();
 
     std::cout << "\n" << std::string(60, '-') << "\n";

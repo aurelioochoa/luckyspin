@@ -56,6 +56,7 @@
 #include "core/generator.h"  // Generator - passive income source
 #include "core/upgrade.h"    // Upgrade, UpgradeType
 #include "core/economy.h"    // economy:: - headless money math
+#include "core/banner.h"     // banner::rows() - aligned marquee header
 
 // Using the standard namespace so we don't have to write "std::" everywhere
 // In larger projects, it's often better to use "std::" explicitly
@@ -578,40 +579,23 @@ public:
      * Animation is based on animationFrame counter that increments each refresh.
      */
     void displayHeader() {
-        // Marquee pattern - stars blink in sequence using escape codes
-        string star1 = (animationFrame % 4 == 0) ? UI::BLACK_STAR : UI::WHITE_STAR;
-        string star2 = (animationFrame % 4 == 1) ? UI::BLACK_STAR : UI::WHITE_STAR;
-        string star3 = (animationFrame % 4 == 2) ? UI::BLACK_STAR : UI::WHITE_STAR;
-        string star4 = (animationFrame % 4 == 3) ? UI::BLACK_STAR : UI::WHITE_STAR;
-        
-        // Color cycling for extra flair
-        string colors[] = {Color::YELLOW, Color::RED, Color::GREEN, Color::CYAN};
-        string starColor = colors[animationFrame % 4];
-        
-        cout << Color::YELLOW;
-        cout << "  " << UI::TL_CORNER;
-        for (int i = 0; i < 46; i++) cout << UI::H_LINE;
-        cout << UI::TR_CORNER << "\n";
-        
-        // Top star row
-        cout << "  " << UI::V_LINE << " " << starColor << star1 << " " << star2 << " " << star3 << " " << star4;
-        cout << Color::YELLOW << "                              ";
-        cout << starColor << star4 << " " << star3 << " " << star2 << " " << star1 << Color::YELLOW << " " << UI::V_LINE << "\n";
-        
-        // Title - using escape codes for slot machine emoji
-        cout << "  " << UI::V_LINE << Color::BOLD << Color::YELLOW;
-        cout << "        " << UI::SLOT << " LUCKY SPIN CASINO " << UI::SLOT << "        ";
-        cout << Color::RESET << Color::YELLOW << UI::V_LINE << "\n";
-        
-        // Bottom star row
-        cout << "  " << UI::V_LINE << " " << starColor << star4 << " " << star3 << " " << star2 << " " << star1;
-        cout << Color::YELLOW << "                              ";
-        cout << starColor << star1 << " " << star2 << " " << star3 << " " << star4 << Color::YELLOW << " " << UI::V_LINE << "\n";
-        
-        cout << "  " << UI::BL_CORNER;
-        for (int i = 0; i < 46; i++) cout << UI::H_LINE;
-        cout << UI::BR_CORNER << Color::RESET << "\n";
-        
+        // The rows are built (and width-tested) by banner::rows(). Colors are
+        // injected here: borders yellow, stars cycling, title bold yellow.
+        static const string starColors[] = {
+            Color::YELLOW, Color::RED, Color::GREEN, Color::CYAN
+        };
+
+        banner::Colors colors;
+        colors.border = Color::YELLOW;
+        colors.star   = starColors[animationFrame % 4];
+        colors.title  = Color::BOLD + Color::YELLOW;
+        colors.reset  = Color::RESET;
+
+        const vector<string> rows = banner::rows(animationFrame, colors);
+        for (size_t i = 0; i < rows.size(); i++) {
+            cout << "  " << rows[i] << "\n";
+        }
+
         // Increment animation frame
         animationFrame++;
     }
