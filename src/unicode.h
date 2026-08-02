@@ -99,6 +99,8 @@ namespace Unicode {
     const std::string DOOR       = "\xF0\x9F\x9A\xAA";  // 🚪 U+1F6AA DOOR
     const std::string CROWN      = "\xF0\x9F\x91\x91";  // 👑 U+1F451 CROWN
     const std::string GLOBE      = "\xF0\x9F\x8C\x8D";  // 🌍 U+1F30D EARTH GLOBE EUROPE-AFRICA
+    const std::string TARGET     = "\xF0\x9F\x8E\xAF";  // 🎯 U+1F3AF DIRECT HIT
+    const std::string REFRESH    = "\xF0\x9F\x94\x84";  // 🔄 U+1F504 ANTICLOCKWISE ARROWS
     const std::string JAR        = "\xF0\x9F\xAB\x99";  // 🫙 U+1FAD9 JAR
     const std::string BUILDING   = "\xF0\x9F\x8F\x9B";  // 🏛 U+1F3DB CLASSICAL BUILDING
     const std::string UP_ARROW   = "\xE2\xAC\x86\xEF\xB8\x8F";  // ⬆️ U+2B06 + VS16 (emoji presentation)

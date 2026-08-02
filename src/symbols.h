@@ -121,6 +121,8 @@ namespace UI {
     const std::string DOOR     = Unicode::DOOR;
     const std::string CROWN    = Unicode::CROWN;
     const std::string GLOBE    = Unicode::GLOBE;
+    const std::string TARGET   = Unicode::TARGET;
+    const std::string REFRESH  = Unicode::REFRESH;
     const std::string GEM      = Unicode::GEM;
     const std::string JAR      = Unicode::JAR;
     const std::string BUILDING = Unicode::BUILDING;

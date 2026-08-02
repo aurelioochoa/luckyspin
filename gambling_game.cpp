@@ -120,6 +120,55 @@ bool kbhit() {
 }
 
 // ============================================================================
+// MAIN MENU DEFINITION
+// ============================================================================
+/*
+ * The menu is a single table. Previously three separate things had to be kept
+ * in sync by hand - the MENU_ITEMS constant, the local items[] array in
+ * displayMenu(), and the char-dispatch switch in play() - and bumping the
+ * constant without adding an entry made the render loop read past the array.
+ *
+ * Now the entry count is derived from the table with sizeof(), section headers
+ * come from each entry's section field, and dispatch switches on the entry's
+ * MenuAction so -Wswitch flags any unhandled action at compile time.
+ */
+enum class MenuAction {
+    SpinWheel, PlaySlots, Blackjack, Roulette,          // GAMES
+    GeneratorShop, UpgradeShop,                          // SHOP
+    ChangeBet, Prestige, Specialization, Achievements,   // OPTIONS
+    Save, Restart, Quit
+};
+
+struct MenuEntry {
+    const char* section;      // Header printed above this entry, or nullptr
+    std::string icon;
+    const char* name;
+    MenuAction action;
+};
+
+namespace {
+const MenuEntry MENU_TABLE[] = {
+    {"GAMES",   UI::WHEEL,   "Spin the Wheel",  MenuAction::SpinWheel},
+    {nullptr,   UI::SLOT,    "Play Slots",      MenuAction::PlaySlots},
+    {nullptr,   UI::CARD,    "Blackjack",       MenuAction::Blackjack},
+    {nullptr,   UI::DICE,    "Roulette",        MenuAction::Roulette},
+    {"SHOP",    UI::STORE,   "Generator Shop",  MenuAction::GeneratorShop},
+    {nullptr,   UI::UP_ARROW,"Upgrade Shop",    MenuAction::UpgradeShop},
+    {"OPTIONS", UI::DOLLAR,  "Change Bet",      MenuAction::ChangeBet},
+    {nullptr,   UI::STAR,    "Prestige",        MenuAction::Prestige},
+    {nullptr,   UI::TARGET,  "Specialization",  MenuAction::Specialization},
+    {nullptr,   UI::TROPHY,  "Achievements",    MenuAction::Achievements},
+    {nullptr,   UI::FLOPPY,  "Save Game",       MenuAction::Save},
+    {nullptr,   UI::REFRESH, "Restart Game",    MenuAction::Restart},
+    {nullptr,   UI::DOOR,    "Quit Game",       MenuAction::Quit}
+};
+
+// Derived from the table, so adding or removing an entry can never leave the
+// count out of sync with the data.
+const int MENU_ITEM_COUNT = (int)(sizeof(MENU_TABLE) / sizeof(MENU_TABLE[0]));
+}
+
+// ============================================================================
 // GAMBLING GAME CLASS
 // ============================================================================
 /*
@@ -221,7 +270,7 @@ private:
     
     int animationFrame;             // Frame counter for marquee animation
     int menuSelection;              // Currently selected menu item (0-indexed)
-    static const int MENU_ITEMS = 13;  // Total number of menu options (added Specialization)
+    // The menu entry count is MENU_ITEM_COUNT, derived from MENU_TABLE above.
     
     // ========================================================================
     // ACHIEVEMENT SYSTEM VARIABLES (Sprint 4)
@@ -812,74 +861,92 @@ public:
     }
     
     /*
+     * menuDesc() - Live description for a menu entry
+     *
+     * Descriptions that show current odds, bet size or prestige level are
+     * computed here each render, so the table above only holds static text.
+     */
+    string menuDesc(MenuAction action) const {
+        switch (action) {
+            case MenuAction::SpinWheel:
+                return "(" + to_string((int)getUpgradeValue(UpgradeType::WHEEL_CHANCE))
+                     + "% chance, "
+                     + to_string(getUpgradeValue(UpgradeType::WHEEL_PAYOUT)).substr(0, 4) + "x)";
+            case MenuAction::PlaySlots:
+                return "(" + to_string((int)getUpgradeValue(UpgradeType::SLOTS_CHANCE))
+                     + "% chance, "
+                     + to_string(getUpgradeValue(UpgradeType::SLOTS_PAYOUT)).substr(0, 3) + "x)";
+            case MenuAction::Blackjack:
+                return "(payout: "
+                     + to_string(getUpgradeValue(UpgradeType::BLACKJACK_PAYOUT)).substr(0, 3) + "x)";
+            case MenuAction::Roulette:        return "(up to 35x payout)";
+            case MenuAction::GeneratorShop:   return "(passive income)";
+            case MenuAction::UpgradeShop:     return "(improve odds)";
+            case MenuAction::ChangeBet:
+                return "(current: $" + to_string((int)betAmount) + ")";
+            case MenuAction::Prestige:
+                return "(level " + to_string(prestigeLevel) + ")";
+            case MenuAction::Specialization:
+                return "(" + specializationName() + ")";
+            case MenuAction::Restart:         return "(reset all progress)";
+            case MenuAction::Achievements:
+            case MenuAction::Save:
+            case MenuAction::Quit:            return "";
+        }
+        return "";
+    }
+
+    /*
+     * specializationName() - Display name of the chosen specialization
+     */
+    string specializationName() const {
+        switch (specializationId) {
+            case 1: return "Wheel";
+            case 2: return "Slots";
+            case 3: return "Blackjack";
+            case 4: return "Roulette";
+            default: return "none";
+        }
+    }
+
+    /*
      * displayMenu() - Show the main menu with arrow/WASD navigation (Sprint 7)
      * 
      * Menu items are highlighted based on menuSelection.
      * Use W/S or Up/Down arrows to navigate, Enter/Space to select.
      */
     void displayMenu() {
-        // Get current upgrade values to show in menu
-        double wheelChance = getUpgradeValue(UpgradeType::WHEEL_CHANCE);
-        double wheelPayout = getUpgradeValue(UpgradeType::WHEEL_PAYOUT);
-        double slotsChance = getUpgradeValue(UpgradeType::SLOTS_CHANCE);
-        double slotsPayout = getUpgradeValue(UpgradeType::SLOTS_PAYOUT);
-        double bjPayout = getUpgradeValue(UpgradeType::BLACKJACK_PAYOUT);
-        (void)bjPayout;  // Used in menu item description
-        
-        // Menu item definitions with icons
-        struct MenuItem {
-            string icon;
-            string name;
-            string desc;
-        };
-        
-        string specName = specializationId == 0 ? "none" : 
-                         (specializationId == 1 ? "Wheel" : 
-                         (specializationId == 2 ? "Slots" : 
-                         (specializationId == 3 ? "Blackjack" : "Roulette")));
-        
-        MenuItem items[] = {
-            {"\xF0\x9F\x8E\xA1", "Spin the Wheel", "(" + to_string((int)wheelChance) + "% chance, " + to_string(wheelPayout).substr(0,4) + "x)"},
-            {"\xF0\x9F\x8E\xB0", "Play Slots", "(" + to_string((int)slotsChance) + "% chance, " + to_string(slotsPayout).substr(0,3) + "x)"},
-            {"\xF0\x9F\x83\x8F", "Blackjack", "(payout: " + to_string(bjPayout).substr(0,3) + "x)"},
-            {"\xF0\x9F\x8E\xB2", "Roulette", "(up to 35x payout)"},
-            {"\xF0\x9F\x8F\xAA", "Generator Shop", "(passive income)"},
-            {"\xE2\xAC\x86", "Upgrade Shop", "(improve odds)"},
-            {"\xF0\x9F\x92\xB5", "Change Bet", "(current: $" + to_string((int)betAmount) + ")"},
-            {"\xE2\xAD\x90", "Prestige", "(level " + to_string(prestigeLevel) + ")"},
-            {"\xF0\x9F\x8E\xAF", "Specialization", "(" + specName + ")"},
-            {"\xF0\x9F\x8F\x86", "Achievements", ""},
-            {"\xF0\x9F\x92\xBE", "Save Game", ""},
-            {"\xF0\x9F\x94\x84", "Restart Game", "(reset all progress)"},
-            {"\xF0\x9F\x9A\xAA", "Quit Game", ""}
-        };
-        
         cout << "\n";
-        cout << "  " << Color::DIM << "Use " << Color::RESET << Color::CYAN << "W/S" 
-             << Color::RESET << Color::DIM << " or " << Color::RESET << Color::CYAN 
-             << "↑/↓" << Color::RESET << Color::DIM << " to navigate, " 
-             << Color::RESET << Color::CYAN << "Enter" << Color::RESET 
+        cout << "  " << Color::DIM << "Use " << Color::RESET << Color::CYAN << "W/S"
+             << Color::RESET << Color::DIM << " or " << Color::RESET << Color::CYAN
+             << "↑/↓" << Color::RESET << Color::DIM << " to navigate, "
+             << Color::RESET << Color::CYAN << "Enter" << Color::RESET
              << Color::DIM << " to select" << Color::RESET << "\n\n";
-        
+
         // Display menu items with cursor
-        for (int i = 0; i < MENU_ITEMS; i++) {
-            // Add section headers
-            if (i == 0) cout << "  " << Color::BOLD << "GAMES" << Color::RESET << "\n";
-            if (i == 4) cout << "\n  " << Color::BOLD << "SHOP" << Color::RESET << "\n";
-            if (i == 6) cout << "\n  " << Color::BOLD << "OPTIONS" << Color::RESET << "\n";
-            
+        for (int i = 0; i < MENU_ITEM_COUNT; i++) {
+            const MenuEntry& item = MENU_TABLE[i];
+
+            // Section headers come from the table rather than hardcoded indices
+            if (item.section != nullptr) {
+                if (i > 0) cout << "\n";
+                cout << "  " << Color::BOLD << item.section << Color::RESET << "\n";
+            }
+
+            const string desc = menuDesc(item.action);
+
             // Highlight selected item
             if (i == menuSelection) {
                 cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-                cout << items[i].icon << " ";
+                cout << item.icon << " ";
                 // Pad to a consistent column count (not byte count)
-                printPadded(items[i].name, 20);
-                cout << Color::RESET << " " << Color::CYAN << items[i].desc << Color::RESET << "\n";
+                printPadded(item.name, 20);
+                cout << Color::RESET << " " << Color::CYAN << desc << Color::RESET << "\n";
             } else {
-                cout << "    " << items[i].icon << " " << Color::WHITE;
-                printPadded(items[i].name, 20);
+                cout << "    " << item.icon << " " << Color::WHITE;
+                printPadded(item.name, 20);
                 cout << Color::RESET;
-                cout << " " << Color::DIM << items[i].desc << Color::RESET << "\n";
+                cout << " " << Color::DIM << desc << Color::RESET << "\n";
             }
         }
     }
@@ -3297,6 +3364,43 @@ public:
      * - quit is false (player hasn't chosen to quit)
      * - money > 0 OR passive income > 0 (can recover with generators)
      */
+    /*
+     * dispatchMenuAction() - Run the action for a menu entry
+     *
+     * The switch covers every MenuAction value, so -Wswitch flags any entry
+     * added to MENU_TABLE without a handler here.
+     *
+     * Returns: true when the player chose to quit
+     */
+    bool dispatchMenuAction(MenuAction action) {
+        switch (action) {
+            case MenuAction::SpinWheel:      spinWheel(); break;
+            case MenuAction::PlaySlots:      playSlots(); break;
+            case MenuAction::Blackjack:      playBlackjack(); break;
+            case MenuAction::Roulette:       playRoulette(); break;
+            case MenuAction::GeneratorShop:  displayGeneratorShop(); break;
+            case MenuAction::UpgradeShop:    displayUpgradeShop(); break;
+            case MenuAction::ChangeBet:      changeBet(); break;
+            case MenuAction::Prestige:       displayPrestigeMenu(); break;
+            case MenuAction::Specialization: displaySpecializationMenu(); break;
+            case MenuAction::Achievements:   displayAchievements(); break;
+            case MenuAction::Save:
+                // Manual save (Sprint 3)
+                if (saveGame()) {
+                    cout << "\n  " << Color::GREEN << UI::CHECK << " Game saved!" << Color::RESET;
+                    usleep(1000000);
+                }
+                break;
+            case MenuAction::Restart:
+                // Restart game from scratch
+                confirmRestart();
+                break;
+            case MenuAction::Quit:
+                return true;
+        }
+        return false;
+    }
+
     void play() {
         char choice;      // Store the player's menu selection
         bool quit = false; // Flag to track if player wants to quit
@@ -3333,84 +3437,39 @@ public:
             
             // Navigation controls (Sprint 7)
             if (choice == 'w' || choice == 'W') {
-                menuSelection = (menuSelection - 1 + MENU_ITEMS) % MENU_ITEMS;
+                menuSelection = (menuSelection - 1 + MENU_ITEM_COUNT) % MENU_ITEM_COUNT;
                 continue;
             }
             if (choice == 's' || choice == 'S') {
                 // S always navigates down (use Enter to select Save)
-                menuSelection = (menuSelection + 1) % MENU_ITEMS;
+                menuSelection = (menuSelection + 1) % MENU_ITEM_COUNT;
                 continue;
             }
             if (choice == 'a' || choice == 'A') {
                 // A can be used to go back/cancel in future
                 continue;
             }
+            // D, Enter, or Space selects the highlighted menu item
             if (choice == 'd' || choice == 'D' || choice == '\n' || choice == '\r' || choice == ' ') {
-                // D, Enter, or Space selects current menu item
-                choice = '0' + menuSelection;  // Convert to number for switch
-                if (menuSelection >= 10) {
-                    // Handle Save, Restart, and Quit specially
-                    if (menuSelection == 10) choice = 's';
-                    if (menuSelection == 11) choice = 'r';
-                    if (menuSelection == 12) choice = 'q';
+                quit = dispatchMenuAction(MENU_TABLE[menuSelection].action);
+            }
+            // Digits 0-9 jump straight to the first ten menu entries
+            else if (choice >= '0' && choice <= '9') {
+                int index = choice - '0';
+                if (index < MENU_ITEM_COUNT) {
+                    quit = dispatchMenuAction(MENU_TABLE[index].action);
                 }
             }
-            
-            // Also support direct number/letter input for quick access
-            // Switch statement handles menu actions
-            // Menu items: 0=Wheel, 1=Slots, 2=Blackjack, 3=Roulette, 4=GenShop, 5=UpgShop, 6=Bet, 7=Prestige, 8=Specialization, 9=Achievements
-            switch(choice) {
-                case '0':  // Spin Wheel (menuSelection 0)
-                    spinWheel();
-                    break;
-                case '1':  // Play Slots (menuSelection 1)
-                    playSlots();
-                    break;
-                case '2':  // Blackjack (menuSelection 2)
-                    playBlackjack();
-                    break;
-                case '3':  // Roulette (menuSelection 3)
-                    playRoulette();
-                    break;
-                case '4':  // Generator Shop (menuSelection 4)
-                    displayGeneratorShop();
-                    break;
-                case '5':  // Upgrade Shop (menuSelection 5)
-                    displayUpgradeShop();
-                    break;
-                case '6':  // Change Bet (menuSelection 6)
-                    changeBet();
-                    break;
-                case '7':  // Prestige (menuSelection 7)
-                    displayPrestigeMenu();
-                    break;
-                case '8':  // Specialization (menuSelection 8)
-                    displaySpecializationMenu();
-                    break;
-                case '9':  // Achievements (menuSelection 9)
-                    displayAchievements();
-                    break;
-                case 's':
-                case 'S':
-                    // Manual save (Sprint 3)
-                    if (saveGame()) {
-                        cout << "\n  " << Color::GREEN << UI::CHECK << " Game saved!" << Color::RESET;
-                        usleep(1000000);
-                    }
-                    break;
-                case 'r':
-                case 'R':
-                    // Restart game from scratch
-                    confirmRestart();
-                    break;
-                case 'q':
-                case 'Q':
-                    quit = true;
-                    break;
-                default:
-                    // Handle invalid input - don't show error, just refresh
-                    break;
+            // Quick-access keys for the entries past the digit range. 's' is
+            // deliberately not one: the navigation branch above claims it for
+            // "down", so Save Game is selected with Enter on its row.
+            else if (choice == 'r' || choice == 'R') {
+                confirmRestart();
             }
+            else if (choice == 'q' || choice == 'Q') {
+                quit = true;
+            }
+            // Any other input is ignored - just refresh the display
             
             // Auto-save periodically (Sprint 3)
             autoSave();
