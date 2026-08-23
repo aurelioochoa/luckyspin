@@ -110,6 +110,7 @@ void GamblingGame::resetGame() {
     achPrestige5 = false;
     achGenerator10 = false;
     achAllUpgrades = false;
+    achPlinkoJackpot = false;
     
     // Reset menu and animation state
     menuSelection = 0;

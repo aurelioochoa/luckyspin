@@ -296,6 +296,10 @@ private:
      * {achievement, event, milestone}.
      */
     vector<string> notificationQueue;
+
+    // When true (web GUI mode), interactive prompts are suppressed: offline
+    // earnings still apply but never block waiting for a keypress.
+    bool headlessMode;
     
 public:
 
@@ -399,6 +403,8 @@ public:
     int getSpecializationId() const;
     bool isInterestUnlocked() const;
     double getInterestRate() const;
+    int getPerkLevel(int perkIndex) const;   // 0..3; -1 for unknown indices
+    bool getAchievementEarned(int index) const;  // 0..8, mirrors display order
 
     // Random-event snapshot: 0 when nothing is running.
     int getActiveEventId() const;
@@ -408,6 +414,7 @@ public:
     // Announcement queue: drains everything queued so far.
     vector<string> takeNotifications();
     void incrementRound();
+    void setHeadless(bool h) { headlessMode = h; }
 
     // Live-hand accessors (dealer cards are visible to callers, which decide
     // how to hide the hole card while the player is still drawing).

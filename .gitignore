@@ -17,3 +17,6 @@ lucky_spin_save.txt.tmp
 *~
 .DS_Store
 gambling_game_asan
+
+# Generated at build time from web/index.html
+src/web_assets.h

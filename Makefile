@@ -8,8 +8,13 @@ TARGET = gambling_game
 SRC = src/game_init.cpp src/game_economy.cpp src/game_actions.cpp \
       src/game_display.cpp \
       src/game_games.cpp src/game_shops.cpp src/game_save.cpp \
-      src/game_loop.cpp src/main.cpp
+      src/game_loop.cpp \
+      src/web/server.cpp src/web/api.cpp src/main.cpp
 OBJ = $(SRC:.cpp=.o)
+
+# The frontend is embedded into the binary so it stays a single file.
+WEB_INDEX = web/index.html
+ASSET_HEADER = src/web_assets.h
 
 TEST_TARGET = tests/run_tests
 TEST_SRC = tests/test_main.cpp
@@ -33,6 +38,18 @@ $(TARGET): $(OBJ)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+
+# api.cpp embeds the frontend; regenerate it whenever index.html changes.
+$(ASSET_HEADER): $(WEB_INDEX)
+	@echo '// GENERATED FILE - rebuilt from web/index.html by make. Do not edit.' > $@
+	@echo '#pragma once' >> $@
+	@echo 'namespace assets {' >> $@
+	@printf 'const char* WEB_INDEX_HTML = R"WEBASSET(' >> $@
+	@cat $(WEB_INDEX) >> $@
+	@printf ')WEBASSET";\n}' >> $@
+	@echo >> $@
+
+src/web/api.o: $(ASSET_HEADER)
 
 -include $(SRC:.cpp=.d)
 
@@ -78,10 +95,15 @@ clean:
 	rm -f $(TARGET) $(TARGET)_debug $(TARGET)_asan
 	rm -f test_unicode
 	rm -f $(TEST_TARGET) tests/run_tests_asan
-	rm -f src/*.o src/*.d *.o *.d tests/*.d
+	rm -f src/*.o src/*.d *.o *.d tests/*.d src/web/*.o src/web/*.d
+	rm -f $(ASSET_HEADER)
 
 run: $(TARGET)
 	./$(TARGET)
+
+# Web GUI on the default port (http://127.0.0.1:8787/)
+gui: $(TARGET)
+	./$(TARGET) --gui
 
 # Unicode font dependencies for proper symbol display
 # Arch Linux (pacman)
@@ -209,6 +231,6 @@ help:
 	@echo "  make test-asan    - Run unit tests under ASan + UBSan"
 	@echo "  make test-unicode - Visual Unicode symbol check"
 
-.PHONY: all clean run install uninstall help \
+.PHONY: all clean run gui install uninstall help \
 	install-fonts install-fonts-arch install-fonts-debian install-fonts-fedora \
 	check-fonts test-unicode test test-asan debug sanitize

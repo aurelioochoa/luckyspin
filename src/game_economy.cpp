@@ -366,7 +366,10 @@ void GamblingGame::applyOfflineEarnings(time_t savedTimestamp) {
         money += offlineEarnings;
         lifetimeEarnings += offlineEarnings;
         updatePeakMoney();
-        
+
+        // Web GUI mode applies earnings silently; no keypress to wait for.
+        if (headlessMode) return;
+
         // Show welcome back message with earnings
         clearScreen();
         displayHeader();

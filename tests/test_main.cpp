@@ -31,6 +31,9 @@
 #include "core/banner.h"
 #include "core/checksum.h"
 #include "core/plinko.h"
+#include "core/roulette.h"
+#include "web/json.h"
+#include "gambling_game.h"
 
 // ============================================================================
 // MINIMAL TEST HARNESS
@@ -973,12 +976,63 @@ static void testEvents() {
           "a new event cannot fire while one is still running");
 }
 
+// ============================================================================
+// WEB JSON UTILITIES
+// ============================================================================
+
+static void testWebJson() {
+    suite("web/json.h - escape and flat-object parsing");
+
+    checkEqual(json::escape("plain"), std::string("plain"), "plain text passes through");
+    checkEqual(json::escape("a\"b"), std::string("a\\\"b"), "quotes escaped");
+    checkEqual(json::escape("a\\b"), std::string("a\\\\b"), "backslash escaped");
+    checkEqual(json::escape("a\nb\tc"), std::string("a\\nb\\tc"), "control chars escaped");
+    const std::string emoji = "\xF0\x9F\x8E\xB0";
+    checkEqual(json::escape(emoji), emoji, "UTF-8 passes through untouched");
+
+    // Round trip: escaped string embedded in a document parses back equal.
+    {
+        const std::string original = "line1\nline2 \"quoted\"";
+        const std::string doc = "{\"v\":\"" + json::escape(original) + "\"}";
+        const json::FlatParseResult r = json::parseFlatObject(doc);
+        check(r.ok, "escaped round-trip document parses");
+        check(r.object.getString("v") == original, "escaped value round-trips");
+    }
+
+    // Flat object with every supported type.
+    {
+        const json::FlatParseResult r = json::parseFlatObject(
+            "{\"action\":\"plinko\",\"bet\":12.5,\"risk\":2,\"fast\":true,\"x\":null}");
+        check(r.ok, "typical request body parses");
+        check(r.object.getString("action") == "plinko", "string member read");
+        checkNear(r.object.getNumber("bet", 0), 12.5, 1e-9, "number member read");
+        checkEqual((int)r.object.getNumber("risk", -1), 2, "integer member read");
+        check(r.object.getBool("fast"), "bool member read");
+        checkEqual((int)r.object.getNumber("missing", 7), 7,
+                   "absent member falls back");
+        check(!r.object.getBool("x", false), "null treated as absent");
+    }
+
+    // Whitespace tolerance and empty object.
+    check(json::parseFlatObject("  { \"a\" : 1 }  ").ok, "whitespace tolerated");
+    check(json::parseFlatObject("{}").ok, "empty object parses");
+
+    // Rejected inputs must not parse.
+    check(!json::parseFlatObject("").ok, "empty body rejected");
+    check(!json::parseFlatObject("{oops").ok, "garbage rejected");
+    check(!json::parseFlatObject("{\"a\":1").ok, "unterminated object rejected");
+    check(!json::parseFlatObject("{\"a\":}").ok, "missing value rejected");
+    check(!json::parseFlatObject("{\"a\":1}trailing").ok,
+          "trailing garbage rejected");
+    check(!json::parseFlatObject("{\"a\":{\"b\":1}}").ok,
+          "nested object rejected (API is flat)");
+}
+
+
 // ===========================================================================
 // HEADLESS ACTIONS (integration: the real GamblingGame engine)
 // ===========================================================================
 
-#include "gambling_game.h"
-#include "core/roulette.h"
 
 // Shared-code announcements (achievements, events, milestones) print and
 // usleep(); tests silence stdout so the report stays readable.
@@ -1225,6 +1279,7 @@ int main() {
     testChecksum();
     testActions();
     testBlackjackFlow();
+    testWebJson();
 
     std::cout << "\n" << std::string(60, '-') << "\n";
     if (g_failures == 0) {

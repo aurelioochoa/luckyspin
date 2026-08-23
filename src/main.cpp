@@ -2,78 +2,116 @@
  * ============================================================================
  * LUCKY SPIN CASINO - A Terminal-Based Incremental Gambling Game
  * ============================================================================
- * 
- * This program demonstrates several C++ concepts:
- * - Classes and Object-Oriented Programming (OOP)
- * - Member variables and methods
- * - Constructor initialization lists
- * - ANSI escape codes for terminal colors and formatting
- * - Linux terminal input handling (termios)
- * - Random number generation
- * - Control flow (loops, conditionals, switch statements)
- * - Standard library usage (iostream, iomanip, string)
- * - Vectors (dynamic arrays) for storing game objects
- * - Time-based calculations for passive income (incremental game mechanic)
- * 
- * Compile with: g++ -std=c++11 -o gambling_game gambling_game.cpp
- * Run with: ./gambling_game
- * 
- * ============================================================================
+ *
+ * Two frontends share one headless engine:
+ *   ./gambling_game            classic terminal UI
+ *   ./gambling_game --gui      local web GUI (http://127.0.0.1:<port>)
+ *
+ * Optional flags:
+ *   --port N    port for --gui (default 8787; busy ports count upward)
+ *   --no-open   do not launch a browser automatically
  */
 
 #include <iostream>
-#include <stdexcept>
+#include <string>
+#include <cstdlib>
+#include <unistd.h>
 
 #include "gambling_game.h"
 #include "utils.h" // terminal::init()/restore()
+#include "web/server.h"
+#include "web/api.h"
 
-// ============================================================================
-// MAIN FUNCTION
-// ============================================================================
-/*
- * main() - Program entry point
- * 
- * Every C++ program must have exactly one main() function.
- * This is where execution begins.
- * 
- * Returns: 0 indicates successful execution
- *          Non-zero values indicate errors
- */
-int main() {
-    /*
-     * Snapshot the terminal settings BEFORE anything switches it into raw mode,
-     * and register handlers to put them back. Without this, quitting with
-     * Ctrl+C leaves the user's shell with no echo and no line editing.
-     */
-    terminal::init();
-    
+namespace {
+
+int portFlag = 8787;
+bool openBrowser = true;
+
+bool parseFlags(int argc, char** argv, bool& guiMode) {
+    for (int i = 1; i < argc; i++) {
+        const std::string arg = argv[i];
+        if (arg == "--gui") {
+            guiMode = true;
+        } else if (arg == "--no-open") {
+            openBrowser = false;
+        } else if (arg == "--port" && i + 1 < argc) {
+            portFlag = std::atoi(argv[++i]);
+        } else if (arg.rfind("--port=", 0) == 0) {
+            portFlag = std::atoi(arg.c_str() + 7);
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: gambling_game [--gui] [--port N] [--no-open]\n";
+            return false;   // caller exits cleanly
+        } else {
+            std::cerr << "Unknown flag: " << arg << " (try --help)\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+void openInBrowser(const std::string& url) {
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::execlp("xdg-open", "xdg-open", url.c_str(), (char*)nullptr);
+        _exit(0);   // xdg-open missing or failed: not an error worth reporting
+    }
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    bool guiMode = false;
+    if (!parseFlags(argc, argv, guiMode)) return 0;
+
     try {
-        // Create an instance (object) of the GamblingGame class
-        // This calls the constructor, initializing all member variables
         GamblingGame game;
-        
-        // Try to load existing save file (Sprint 3)
-        // If successful, offline earnings will be calculated and shown
+
+        if (!guiMode) {
+            /*
+             * Snapshot terminal settings BEFORE anything switches to raw mode
+             * and restore them on exit or fatal signal.
+             */
+            terminal::init();
+            game.loadGame();
+            game.play();
+            return 0;
+        }
+
+        // Web GUI: no raw-terminal tricks; offline earnings apply silently.
+        game.setHeadless(true);
         game.loadGame();
-        
-        // Start the game by calling the play() method
-        game.play();
+
+        std::cout <<
+            "\n  \xF0\x9F\x8E\xB0 Lucky Spin Casino - Web GUI\n"
+            "  --------------------------------\n";
+
+        const int bound = web::serveLoop(
+            portFlag,
+            [&game](const web::Request& req) { return api::handle(game, req); },
+            [&game]() { game.saveGame(); },
+            [](int port) {
+                const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/";
+                std::cout << "  Serving:  " << url << "\n"
+                          << "  Stop:     Ctrl+C (progress is saved)\n\n"
+                          << std::flush;
+                if (openBrowser) openInBrowser(url);
+            });
+
+        (void)bound;
+        return 0;
     }
     catch (const std::exception& e) {
-        /*
-         * Restore the terminal before printing, otherwise the message renders
-         * into a raw-mode terminal and the shell is left unusable.
-         */
-        terminal::restore();
-        std::cerr << "\nLucky Spin hit an unexpected error: " << e.what() << "\n";
+        if (guiMode) {
+            std::cerr << "\nLucky Spin GUI failed to start: " << e.what() << "\n";
+        } else {
+            terminal::restore();
+            std::cerr << "\nLucky Spin hit an unexpected error: " << e.what() << "\n";
+        }
         return 1;
     }
     catch (...) {
-        terminal::restore();
+        if (!guiMode) terminal::restore();
         std::cerr << "\nLucky Spin hit an unexpected error.\n";
         return 1;
     }
-    
-    // Return 0 to indicate successful program completion
-    return 0;
 }

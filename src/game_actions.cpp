@@ -586,6 +586,31 @@ const vector<Upgrade>& GamblingGame::allUpgrades() const { return upgrades; }
 int GamblingGame::getSpecializationId() const { return specializationId; }
 bool GamblingGame::isInterestUnlocked() const { return interestUnlocked; }
 double GamblingGame::getInterestRate() const { return interestRate; }
+
+int GamblingGame::getPerkLevel(int perkIndex) const {
+    switch (perkIndex) {
+        case 0: return perkStartingMoney;
+        case 1: return perkGeneratorDiscount;
+        case 2: return perkOfflineCap;
+        case 3: return perkPassiveBoost;
+        default: return -1;
+    }
+}
+
+bool GamblingGame::getAchievementEarned(int index) const {
+    switch (index) {
+        case 0: return achFirstWin;
+        case 1: return achHighRoller;
+        case 2: return achMillionaire;
+        case 3: return achLuckyStreak;
+        case 4: return achGenerator10;
+        case 5: return achAllUpgrades;
+        case 6: return achPrestige1;
+        case 7: return achPrestige5;
+        case 8: return achPlinkoJackpot;
+        default: return false;
+    }
+}
 int GamblingGame::getActiveEventId() const { return activeEventId; }
 time_t GamblingGame::getActiveEventEndTime() const { return eventEndTime; }
 time_t GamblingGame::getNextEventTime() const { return nextEventTime; }
