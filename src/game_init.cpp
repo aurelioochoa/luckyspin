@@ -49,10 +49,12 @@ GamblingGame::GamblingGame() : money(100.0), betAmount(10.0), round(1),
                  animationFrame(0), menuSelection(0),
                  achFirstWin(false), achHighRoller(false), achMillionaire(false),
                  achLuckyStreak(false), achGenerator10(false), achAllUpgrades(false),
-                 achPrestige1(false), achPrestige5(false), currentWinStreak(0),
+                 achPrestige1(false), achPrestige5(false),
+                 achPlinkoJackpot(false), currentWinStreak(0),
                  achievementMultiplier(1.0), prestigeStars(0),
                  perkStartingMoney(0), perkGeneratorDiscount(0), perkOfflineCap(0), perkPassiveBoost(0),
-                 specializationId(0), interestUnlocked(false), interestRate(0.001) {
+                 specializationId(0), interestUnlocked(false), interestRate(0.001),
+                 activeEventId(0), eventEndTime(0), nextEventTime(0) {
     // Initialize milestones as locked
     for (int i = 0; i < 10; i++) {
         milestoneUnlocked[i] = false;
@@ -67,6 +69,9 @@ GamblingGame::GamblingGame() : money(100.0), betAmount(10.0), round(1),
     // Initialize the last update time to now
     lastUpdateTime = time(0);
     gameStartTime = time(0);
+
+    // First random event fires 3-8 minutes into the session
+    nextEventTime = time(0) + 180 + Rng::global().range(0, 300);
     
     // Initialize all generators
     // Each generator has: name, shortName, baseIncome, baseCost, costMultiplier
@@ -99,31 +104,43 @@ void GamblingGame::initializeGenerators() {
     generators.push_back(Generator(
         "Auto-Wheel", "AWL",
         "A mechanical wheel that spins itself around the clock",
-        "🎡", 2.0, 200, 1.18));
+        "\U0001F3B1", 2.0, 200, 1.18));
     
     // Mid game generators
     generators.push_back(Generator(
         "Card Shark", "CRD",
         "A skilled dealer who always finds an edge at the tables",
-        "🃏", 5.0, 500, 1.20));
+        "\U0001F0CF", 5.0, 500, 1.17));
     generators.push_back(Generator(
         "VIP Table", "VIP",
         "An exclusive high-stakes table for the elite gamblers",
-        "👑", 15.0, 1500, 1.22));
+        "\U0001F451", 18.0, 1500, 1.18));
     generators.push_back(Generator(
         "High Roller", "HRL",
         "A wealthy patron who bets big and tips even bigger",
-        "💎", 50.0, 5000, 1.25));
+        "\U0001F48E", 60.0, 5000, 1.19));
     
     // Late game generators
     generators.push_back(Generator(
         "Casino Floor", "FLR",
         "An entire floor of games generating constant revenue",
-        "🏛️", 200.0, 20000, 1.28));
+        "\U0001F3DB\uFE0F", 280.0, 20000, 1.20));
     generators.push_back(Generator(
         "Casino Empire", "EMP",
         "A chain of casinos spanning the globe, printing money 24/7",
-        "🌍", 1000.0, 100000, 1.30));
+        "\U0001F30D", 1600.0, 100000, 1.21));
+    generators.push_back(Generator(
+        "Casino Chain", "CHN",
+        "A franchise operation with a casino in every major city",
+        "\U0001F3E2", 10000.0, 600000, 1.22));
+    generators.push_back(Generator(
+        "Offshore Casino", "OFS",
+        "A floating palace beyond the reach of any gaming commission",
+        "\U0001F6A2", 60000.0, 4000000, 1.23));
+    generators.push_back(Generator(
+        "Money Printer", "PRT",
+        "Technically legal. Nobody asks questions at this level",
+        "\U0001F5A8\uFE0F", 400000.0, 25000000, 1.24));
 }
 
 /*
@@ -210,6 +227,24 @@ void GamblingGame::initializeUpgrades() {
         "Seven is your lucky number! Each level adds +5x bonus when hitting 7, 17, or 27.",
         UpgradeType::LUCKY_NUMBER,
         5, 800, 3.2, 0.0, 5.0
+    ));
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // PLINKO UPGRADES
+    // Base: risk-level multiplier tables (see core/plinko.h)
+    // ═══════════════════════════════════════════════════════════════════
+    upgrades.push_back(Upgrade(
+        "Golden Pegs",
+        "Gold-plated pegs polish every payout. Each level adds +0.1x to all bucket multipliers.",
+        UpgradeType::PLINKO_PAYOUT,
+        5, 700, 2.8, 1.0, 0.1
+    ));
+    
+    upgrades.push_back(Upgrade(
+        "Magnet Bumpers",
+        "The jackpot buckets attract bigger prizes. Each level adds +25% to edge bucket payouts.",
+        UpgradeType::PLINKO_EDGE,
+        4, 900, 3.0, 1.0, 0.25
     ));
     
     // ═══════════════════════════════════════════════════════════════════

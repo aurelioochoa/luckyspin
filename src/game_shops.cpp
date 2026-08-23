@@ -221,17 +221,16 @@ void GamblingGame::displayPrestigeMenu() {
     cout << "] " << fixed << setprecision(1) << progress << "%\n";
     
     if (canPrestige()) {
-        cout << "\n  " << Color::BG_GREEN << Color::WHITE << Color::BOLD 
+        cout << "\n  " << Color::BG_GREEN << Color::WHITE << Color::BOLD
              << " PRESTIGE AVAILABLE! " << Color::RESET << "\n";
         cout << "\n  " << Color::WHITE << "After prestige you will have:" << Color::RESET << "\n";
         cout << "    - Money: " << Color::CYAN << "$100.00" << Color::RESET << "\n";
-        cout << "    - Multiplier: " << Color::GREEN << fixed << setprecision(1) 
+        cout << "    - Multiplier: " << Color::GREEN << fixed << setprecision(1)
              << (prestigeMultiplier + 0.1) << "x" << Color::RESET << "\n";
-        cout << "\n  " << Color::CYAN << "[P]" << Color::RESET << " Prestige Now\n";
     } else {
         cout << "\n  " << Color::DIM << "Keep earning to unlock prestige!" << Color::RESET << "\n";
     }
-    
+
     cout << "  " << Color::CYAN << "[P]" << Color::RESET << " Prestige Now";
     if (!canPrestige()) cout << Color::DIM << " (locked)";
     cout << Color::RESET << "\n";
@@ -400,17 +399,21 @@ void GamblingGame::displaySpecializationMenu() {
     cout << "\n  " << Color::WHITE << "Choose your casino specialty for bonus payouts!" << Color::RESET << "\n";
     cout << "  " << Color::DIM << "You can change this anytime, but bonuses only apply to your specialty." << Color::RESET << "\n\n";
     
-    const char* specNames[] = {"None", "Wheel Tycoon", "Slot Mogul", "Card Shark", "Roulette Baron"};
+    const char* specNames[] = {"None", "Wheel Tycoon", "Slot Mogul", "Card Shark", "Roulette Baron", "Plinko Pro"};
     const char* specDesc[] = {
         "No specialization bonus",
         "+50% payout on Wheel spins",
         "+50% payout on Slots",
         "+50% payout on Blackjack",
-        "+50% payout on Roulette"
+        "+50% payout on Roulette",
+        "+50% payout on Plinko drops"
     };
-    const char* specIcons[] = {"", "🎡", "🎰", "🃏", "🎲"};
-    
-    for (int i = 0; i <= 4; i++) {
+    const int SPEC_COUNT = 5;
+    const char* specIcons[SPEC_COUNT + 1] = {
+        "", "\xF0\x9F\x8E\xA1", "\xF0\x9F\x8E\xB0", "\xF0\x9F\x83\x8F", "\xF0\x9F\x8E\xB2", "\xF0\x9F\x8E\xAF"
+    };
+
+    for (int i = 0; i <= SPEC_COUNT; i++) {
         if (i == specializationId) {
             cout << "  " << Color::BG_GREEN << Color::WHITE << Color::BOLD << " ✓ ";
         } else {
@@ -434,7 +437,7 @@ void GamblingGame::displaySpecializationMenu() {
     
     char choice = getch();
     
-    if (choice >= '0' && choice <= '4') {
+    if (choice >= '0' && choice <= '0' + SPEC_COUNT) {
         int newSpec = choice - '0';
         if (newSpec != specializationId) {
             specializationId = newSpec;

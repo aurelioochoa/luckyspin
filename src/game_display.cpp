@@ -177,6 +177,7 @@ string GamblingGame::menuDesc(MenuAction action) const {
             return "(payout: "
                  + to_string(getUpgradeValue(UpgradeType::BLACKJACK_PAYOUT)).substr(0, 3) + "x)";
         case MenuAction::Roulette:        return "(up to 35x payout)";
+        case MenuAction::Plinko:          return "(risk levels, 35x edge)";
         case MenuAction::GeneratorShop:   return "(passive income)";
         case MenuAction::UpgradeShop:     return "(improve odds)";
         case MenuAction::ChangeBet:
@@ -202,6 +203,7 @@ string GamblingGame::specializationName() const {
         case 2: return "Slots";
         case 3: return "Blackjack";
         case 4: return "Roulette";
+        case 5: return "Plinko";
         default: return "none";
     }
 }
@@ -275,6 +277,21 @@ void GamblingGame::showAchievement(const string& name, const string& desc) {
 }
 
 /*
+ * showEvent() - Display a random-event announcement (Phase D)
+ *
+ * Mirrors showAchievement(): printed inline at the current cursor position,
+ * with a short pause so it is readable before the next redraw.
+ */
+void GamblingGame::showEvent(const string& name, const string& desc) {
+    cout << "\n";
+    cout << "  " << Color::BG_MAGENTA << Color::WHITE << Color::BOLD
+         << " \xE2\x9A\xA1 CASINO EVENT! \xE2\x9A\xA1 " << Color::RESET << "\n";
+    cout << "  " << Color::MAGENTA << name << Color::RESET << "\n";
+    cout << "  " << Color::DIM << desc << Color::RESET << "\n";
+    usleep(1800000);
+}
+
+/*
  * displayAchievements() - Show all achievements and their status
  */
 void GamblingGame::displayAchievements() {
@@ -284,9 +301,9 @@ void GamblingGame::displayAchievements() {
     printLine('=', 50, Color::YELLOW);
     printCentered("ACHIEVEMENTS", 50, Color::YELLOW + Color::BOLD);
     printLine('=', 50, Color::YELLOW);
-    
+
     int unlocked = 0;
-    int total = 8;
+    int total = 9;
     
     auto showAch = [&](bool earned, const string& name, const string& desc) {
         if (earned) {
@@ -308,6 +325,7 @@ void GamblingGame::displayAchievements() {
     showAch(achAllUpgrades, "Fully Upgraded", "Max out all upgrades");
     showAch(achPrestige1, "First Prestige", "Prestige for the first time");
     showAch(achPrestige5, "Prestige Master", "Reach prestige level 5");
+    showAch(achPlinkoJackpot, "Plinko Jackpot", "Land in a Plinko edge bucket");
     
     printLine('-', 50, Color::DIM);
     cout << "\n  " << Color::WHITE << "Progress: " << Color::YELLOW 

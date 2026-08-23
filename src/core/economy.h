@@ -51,6 +51,8 @@ inline double defaultUpgradeValue(UpgradeType type) {
         case UpgradeType::DEALER_BUST:      return 0.0;
         case UpgradeType::ROULETTE_PAYOUT:  return 2.0;
         case UpgradeType::LUCKY_NUMBER:     return 0.0;
+        case UpgradeType::PLINKO_PAYOUT:    return 1.0;
+        case UpgradeType::PLINKO_EDGE:      return 1.0;
     }
     return 0.0;
 }
@@ -248,7 +250,8 @@ inline double generatorSynergyMultiplier(const std::vector<Generator>& generator
 /*
  * specializationMultiplier() - Bonus for the player's chosen specialization.
  *
- * specializationId: 0 = none, 1 = Wheel, 2 = Slots, 3 = Blackjack, 4 = Roulette
+ * specializationId: 0 = none, 1 = Wheel, 2 = Slots, 3 = Blackjack, 4 = Roulette,
+ * 5 = Plinko
  */
 inline double specializationMultiplier(int specializationId) {
     if (specializationId == 0) return 1.0;
@@ -383,6 +386,66 @@ inline int maxAffordable(const Generator& gen, double availableMoney,
     }
 
     return n;
+}
+
+// ============================================================================
+// RANDOM EVENTS
+// ============================================================================
+
+/*
+ * Random events are timed boosts that fire every few minutes of active play.
+ * The game tracks only an event id and an expiry timestamp; the multipliers
+ * themselves live here so tests can pin them down.
+ *
+ * Event ids:
+ *   0 = none
+ *   1 = Happy Hour  (2x passive income)
+ *   2 = Hot Streak  (1.5x game payouts)
+ *   3 = Money Rain  (instant cash, no duration multiplier)
+ */
+const int EVENT_NONE = 0;
+const int EVENT_HAPPY_HOUR = 1;
+const int EVENT_HOT_STREAK = 2;
+const int EVENT_MONEY_RAIN = 3;
+
+// Playable event ids are 1..EVENT_COUNT; pick uniformly with below(EVENT_COUNT).
+const int EVENT_COUNT = 3;
+
+// How long a duration event lasts once fired.
+const int EVENT_DURATION_SECONDS = 60;
+
+// After any event, the next one is scheduled MIN_GAP..MIN_GAP+GAP_SPREAD seconds out.
+const int EVENT_MIN_GAP_SECONDS = 180;
+const int EVENT_GAP_SPREAD_SECONDS = 300;
+
+/*
+ * eventName()/eventDescription() - Shared wording for both frontends so the
+ * terminal banner and the web toast announce the same thing.
+ */
+inline const char* eventName(int eventId) {
+    switch (eventId) {
+        case EVENT_HAPPY_HOUR: return "Happy Hour";
+        case EVENT_HOT_STREAK: return "Hot Streak";
+        case EVENT_MONEY_RAIN: return "Money Rain";
+        default:               return "";
+    }
+}
+
+inline const char* eventDescription(int eventId) {
+    switch (eventId) {
+        case EVENT_HAPPY_HOUR: return "Passive income doubled for 60 seconds!";
+        case EVENT_HOT_STREAK: return "All game payouts x1.5 for 60 seconds!";
+        case EVENT_MONEY_RAIN: return "Cash rained from the ceiling!";
+        default:               return "";
+    }
+}
+
+inline double eventIncomeMultiplier(int eventId) {
+    return (eventId == EVENT_HAPPY_HOUR) ? 2.0 : 1.0;
+}
+
+inline double eventPayoutMultiplier(int eventId) {
+    return (eventId == EVENT_HOT_STREAK) ? 1.5 : 1.0;
 }
 
 } // namespace economy

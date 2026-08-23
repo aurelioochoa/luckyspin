@@ -109,6 +109,7 @@ bool GamblingGame::saveGame() {
     body << "achAllUpgrades=" << achAllUpgrades << endl;
     body << "achPrestige1=" << achPrestige1 << endl;
     body << "achPrestige5=" << achPrestige5 << endl;
+    body << "achPlinkoJackpot=" << achPlinkoJackpot << endl;
     body << "currentWinStreak=" << currentWinStreak << endl;
     
     // Save Phase B data
@@ -416,6 +417,8 @@ bool GamblingGame::loadFrom(const string& path, time_t& savedTimestamp) {
             parseBool(value, achPrestige1);
         } else if (key == "achPrestige5") {
             parseBool(value, achPrestige5);
+        } else if (key == "achPlinkoJackpot") {
+            parseBool(value, achPlinkoJackpot);
         } else if (key == "currentWinStreak") {
             parseCount(value, currentWinStreak, INT_MAX - 1);
         }
@@ -436,7 +439,8 @@ bool GamblingGame::loadFrom(const string& path, time_t& savedTimestamp) {
         }
         // Phase C data
         else if (key == "specializationId") {
-            parseCount(value, specializationId, 4);
+            // 5 = Plinko Pro; clamping to 4 here silently downgraded players
+            parseCount(value, specializationId, 5);
         } else if (key == "interestUnlocked") {
             parseBool(value, interestUnlocked);
         } else if (key == "interestRate") {

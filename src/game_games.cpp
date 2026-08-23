@@ -22,6 +22,7 @@
 #include "core/money.h"
 #include "core/rng.h"
 #include "core/economy.h"
+#include "core/plinko.h"
 #include "core/banner.h"
 #include "core/checksum.h"
 
@@ -218,7 +219,7 @@ void GamblingGame::spinWheel() {
         double winAmount = betAmount * payoutMult;
         
         // Apply Lucky Charm bonus if it triggers
-        winAmount = applyLuckyBonus(winAmount);
+        winAmount = applyLuckyBonus(applyHotStreak(winAmount));
         
         money += winAmount;
         totalWins++;
@@ -329,7 +330,7 @@ void GamblingGame::playSlots() {
         double winAmount = betAmount * payoutMult;
         
         // Apply Lucky Charm bonus if it triggers
-        winAmount = applyLuckyBonus(winAmount);
+        winAmount = applyLuckyBonus(applyHotStreak(winAmount));
         
         money += winAmount;
         totalWins++;
@@ -584,7 +585,7 @@ void GamblingGame::playBlackjack() {
             double basePayout = getUpgradeValue(UpgradeType::BLACKJACK_PAYOUT);
             double payout = cards::isNaturalBlackjack(playerHand) ? basePayout + 0.5 : basePayout;
             double winAmount = betAmount * payout;
-            winAmount = applyLuckyBonus(winAmount);
+            winAmount = applyLuckyBonus(applyHotStreak(winAmount));
             money += winAmount;
             totalWins++;
             updatePeakMoney();
@@ -786,7 +787,7 @@ void GamblingGame::playRoulette() {
                  << "x ★" << Color::RESET << "\n";
         }
         
-        winAmount = applyLuckyBonus(winAmount);
+        winAmount = applyLuckyBonus(applyHotStreak(winAmount));
         money += winAmount;
         totalWins++;
         updatePeakMoney();
@@ -803,6 +804,205 @@ void GamblingGame::playRoulette() {
              << betAmount << Color::RESET << "\n";
     }
     
+    round++;
+    cout << "\n  Press any key to continue...";
+    getch();
+}
+
+/*
+ * playPlinko() - Plinko game with risk levels
+ *
+ * Rules (affected by upgrades):
+ * - Player picks a risk level (Low/Medium/High) which selects the
+ *   multiplier table (see core/plinko.h)
+ * - A ball drops through 10 rows of pegs, bouncing left/right fairly
+ * - Payout: bet * bucket multiplier * PLINKO_PAYOUT upgrade
+ * - Edge buckets (jackpots) additionally scale with PLINKO_EDGE upgrade
+ * - Specialization 5 (Plinko Pro) adds +50% to payouts
+ */
+void GamblingGame::playPlinko() {
+    if (!canAffordBet()) return;
+
+    // Risk selection menu
+    const char* riskNames[plinko::RISK_COUNT] = {"Low Risk", "Medium Risk", "High Risk"};
+    const char* riskDesc[plinko::RISK_COUNT] = {
+        "Steady returns, small jackpots (2x edge)",
+        "Balanced spread, decent jackpots (6x edge)",
+        "Mostly losses, huge jackpots (35x edge)"
+    };
+
+    int selection = 0;  // 0-2 risk levels, 3 = cancel
+    int riskChoice = -1;
+
+    while (riskChoice == -1) {
+        clearScreen();
+        displayHeader();
+        cout << "\n";
+        printLine('-', 50, Color::MAGENTA);
+        printCentered("\xF0\x9F\x8E\xAF PLINKO \xF0\x9F\x8E\xAF", 50, Color::MAGENTA + Color::BOLD);
+        printLine('-', 50, Color::MAGENTA);
+
+        cout << "\n  " << Color::WHITE << "Balance: " << Color::GREEN
+             << formatMoney(money) << Color::RESET << "\n";
+        cout << "  " << Color::WHITE << "Bet: " << Color::CYAN << "$" << fixed
+             << setprecision(2) << betAmount << Color::RESET << "\n";
+
+        cout << "\n  " << Color::DIM << "Use W/S or " << UI::ARROW_UP << "/" << UI::ARROW_DOWN
+             << " to navigate, Enter to drop the ball" << Color::RESET << "\n\n";
+
+        for (int i = 0; i < plinko::RISK_COUNT; i++) {
+            if (i == selection) {
+                cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " "
+                     << UI::ARROW_RIGHT << " " << riskNames[i] << Color::RESET;
+                cout << "    " << riskDesc[i] << "\n";
+            } else {
+                cout << "    " << Color::WHITE << riskNames[i] << Color::RESET;
+                cout << "    " << Color::DIM << riskDesc[i] << Color::RESET << "\n";
+            }
+        }
+
+        if (selection == plinko::RISK_COUNT) {
+            cout << "  " << Color::BG_RED << Color::WHITE << Color::BOLD << " "
+                 << UI::ARROW_RIGHT << " Cancel" << Color::RESET << "    Return to menu\n";
+        } else {
+            cout << "    " << Color::RED << "Cancel" << Color::RESET << "    "
+                 << Color::DIM << "Return to menu" << Color::RESET << "\n";
+        }
+
+        char choice = getch();
+
+        if (choice == 27) {
+            char seq1 = getchWithTimeout(50);
+            if (seq1 == '[') {
+                char seq2 = getchWithTimeout(50);
+                if (seq2 == 'A') choice = 'w';
+                else if (seq2 == 'B') choice = 's';
+            }
+            if (choice == 27) continue;
+        }
+
+        if (choice == 'w' || choice == 'W') {
+            selection = (selection - 1 + plinko::RISK_COUNT + 1) % (plinko::RISK_COUNT + 1);
+        } else if (choice == 's' || choice == 'S') {
+            selection = (selection + 1) % (plinko::RISK_COUNT + 1);
+        } else if (choice == '\n' || choice == '\r' || choice == ' ' || choice == 'd' || choice == 'D') {
+            if (selection == plinko::RISK_COUNT) return;
+            riskChoice = selection;
+        } else if (choice == 'q' || choice == 'Q') {
+            return;
+        }
+    }
+
+    const plinko::Risk risk = (plinko::Risk)riskChoice;
+
+    // Deduct bet
+    money -= betAmount;
+
+    // Precompute the ball's path: positions[r] is the horizontal index (0..r)
+    // after r rows. Each row is a fair left/right bounce (binomial walk).
+    int positions[plinko::ROWS + 1];
+    positions[0] = 0;
+    for (int r = 1; r <= plinko::ROWS; r++) {
+        positions[r] = positions[r - 1] + Rng::global().below(2);
+    }
+    const int bucket = positions[plinko::ROWS];
+
+    // Animate the drop, one board row at a time
+    clearScreen();
+    displayHeader();
+    cout << "\n";
+    printLine('-', 50, Color::MAGENTA);
+    printCentered("PLINKO - " + string(riskNames[riskChoice]), 50, Color::MAGENTA + Color::BOLD);
+    printLine('-', 50, Color::MAGENTA);
+    cout << "\n";
+
+    for (int r = 1; r <= plinko::ROWS; r++) {
+        // Indent so each row centers under the previous one
+        for (int pad = 0; pad < plinko::ROWS - r + 6; pad++) cout << " ";
+        for (int i = 0; i <= r; i++) {
+            if (i == positions[r]) {
+                cout << Color::YELLOW << Color::BOLD << "o" << Color::RESET;
+            } else {
+                cout << Color::DIM << "." << Color::RESET;
+            }
+            cout << " ";
+        }
+        cout << "\n";
+        cout.flush();
+        usleep(180000);
+    }
+
+    // Show the bucket row with the landing bucket highlighted
+    const double* table = plinko::multiplierTable(risk);
+    cout << "\n  ";
+    for (int k = 0; k < plinko::BUCKETS; k++) {
+        ostringstream label;
+        label << fixed << setprecision(table[k] < 1.0 ? 1 : 0) << table[k];
+        string text = label.str();
+        const int width = 5;
+        int padLeft = (width - (int)text.size()) / 2;
+        if (padLeft < 0) padLeft = 0;
+        int padRight = width - padLeft - (int)text.size();
+        if (padRight < 0) padRight = 0;
+        if (k == bucket) {
+            cout << string(padLeft, ' ') << Color::BG_YELLOW << Color::BLACK << Color::BOLD
+                 << text << Color::RESET << string(padRight, ' ');
+        } else {
+            cout << string(padLeft, ' ') << Color::DIM << text << Color::RESET
+                 << string(padRight, ' ');
+        }
+    }
+    cout << "\n\n";
+
+    // Compute payout from the pure board math, then game-layer bonuses
+    double plinkoPayout = getUpgradeValue(UpgradeType::PLINKO_PAYOUT);
+    double plinkoEdge = getUpgradeValue(UpgradeType::PLINKO_EDGE);
+    double gross = plinko::payout(betAmount, risk, bucket, plinkoPayout, plinkoEdge);
+
+    // Specialization 5 (Plinko Pro): +50% to Plinko payouts
+    if (specializationId == 5 && gross > 0) {
+        gross *= getSpecializationMultiplier();
+    }
+
+    const bool edge = plinko::isEdgeBucket(bucket);
+
+    if (gross > 0) {
+        gross = applyLuckyBonus(applyHotStreak(gross));
+        money += gross;
+        updatePeakMoney();
+
+        if (edge) {
+            cout << "  " << Color::BG_YELLOW << Color::BOLD << Color::RED
+                 << "  *** PLINKO JACKPOT! ***  " << Color::RESET << "\n";
+        } else if (gross >= betAmount) {
+            cout << "  " << Color::BG_GREEN << Color::WHITE << Color::BOLD
+                 << " YOU WIN! " << Color::RESET << "\n";
+        } else {
+            cout << "  " << Color::YELLOW << "Partial return." << Color::RESET << "\n";
+        }
+        cout << "  " << Color::GREEN << "+$" << fixed << setprecision(2)
+             << gross << Color::RESET << "\n";
+    } else {
+        cout << "  " << Color::BG_RED << Color::WHITE << Color::BOLD
+             << " NO RETURN " << Color::RESET << "\n";
+        cout << "  " << Color::RED << "-$" << fixed << setprecision(2)
+             << betAmount << Color::RESET << "\n";
+    }
+
+    // Win/loss stats: a profitable (or break-even) drop counts as a win
+    if (gross >= betAmount && gross > 0) {
+        recordWin(gross);
+    } else {
+        recordLoss();
+    }
+
+    // Jackpot achievement
+    if (edge && !achPlinkoJackpot) {
+        achPlinkoJackpot = true;
+        showAchievement("Plinko Jackpot", "Land in a Plinko edge bucket! (+1% income)");
+        updateAchievementMultiplier();
+    }
+
     round++;
     cout << "\n  Press any key to continue...";
     getch();

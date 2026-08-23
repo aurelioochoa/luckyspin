@@ -156,6 +156,7 @@ bool GamblingGame::dispatchMenuAction(MenuAction action) {
         case MenuAction::PlaySlots:      playSlots(); break;
         case MenuAction::Blackjack:      playBlackjack(); break;
         case MenuAction::Roulette:       playRoulette(); break;
+        case MenuAction::Plinko:         playPlinko(); break;
         case MenuAction::GeneratorShop:  displayGeneratorShop(); break;
         case MenuAction::UpgradeShop:    displayUpgradeShop(); break;
         case MenuAction::ChangeBet:      changeBet(); break;

@@ -28,7 +28,7 @@
  * MenuAction so -Wswitch flags any unhandled action at compile time.
  */
 enum class MenuAction {
-    SpinWheel, PlaySlots, Blackjack, Roulette,          // GAMES
+    SpinWheel, PlaySlots, Blackjack, Roulette, Plinko,   // GAMES
     GeneratorShop, UpgradeShop,                          // SHOP
     ChangeBet, Prestige, Specialization, Achievements,   // OPTIONS
     Save, Restart, Quit
@@ -47,6 +47,7 @@ const MenuEntry MENU_TABLE[] = {
     {nullptr,   UI::SLOT,    "Play Slots",      MenuAction::PlaySlots},
     {nullptr,   UI::CARD,    "Blackjack",       MenuAction::Blackjack},
     {nullptr,   UI::DICE,    "Roulette",        MenuAction::Roulette},
+    {nullptr,   UI::TARGET,  "Plinko",          MenuAction::Plinko},
     {"SHOP",    UI::STORE,   "Generator Shop",  MenuAction::GeneratorShop},
     {nullptr,   UI::UP_ARROW,"Upgrade Shop",    MenuAction::UpgradeShop},
     {"OPTIONS", UI::DOLLAR,  "Change Bet",      MenuAction::ChangeBet},

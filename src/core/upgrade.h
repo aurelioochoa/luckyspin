@@ -37,7 +37,10 @@ enum class UpgradeType {
     DEALER_BUST,       // Increases chance dealer busts
     // Roulette upgrades
     ROULETTE_PAYOUT,   // Increases roulette payout multiplier
-    LUCKY_NUMBER       // Bonus payout on specific numbers
+    LUCKY_NUMBER,      // Bonus payout on specific numbers
+    // Plinko upgrades
+    PLINKO_PAYOUT,     // Multiplies every Plinko bucket payout
+    PLINKO_EDGE        // Boosts the Plinko edge (jackpot) buckets
 };
 
 class Upgrade {

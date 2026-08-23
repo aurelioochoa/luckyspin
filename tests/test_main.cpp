@@ -30,6 +30,7 @@
 #include "core/economy.h"
 #include "core/banner.h"
 #include "core/checksum.h"
+#include "core/plinko.h"
 
 // ============================================================================
 // MINIMAL TEST HARNESS
@@ -850,6 +851,129 @@ static void testChecksum() {
 }
 
 // ============================================================================
+// PLINKO
+// ============================================================================
+
+static void testPlinko() {
+    suite("core/plinko.h - board math and payout tables");
+
+    checkEqual(plinko::BUCKETS, plinko::ROWS + 1, "bucket count is ROWS + 1");
+
+    // Every risk table must be symmetric: the walk distribution is symmetric,
+    // so an asymmetric table would bias expected value by construction.
+    for (int r = 0; r < plinko::RISK_COUNT; ++r) {
+        const double* table = plinko::multiplierTable((plinko::Risk)r);
+        bool symmetric = true;
+        for (int k = 0; k <= plinko::ROWS; ++k) {
+            if (table[k] != table[plinko::ROWS - k]) symmetric = false;
+        }
+        std::string what = "risk " + std::to_string(r) + " table is symmetric";
+        check(symmetric, what);
+    }
+
+    // Edge buckets pay more than any interior bucket on every risk level.
+    for (int r = 0; r < plinko::RISK_COUNT; ++r) {
+        const plinko::Risk risk = (plinko::Risk)r;
+        const double* table = plinko::multiplierTable(risk);
+        double maxInterior = 0.0;
+        for (int k = 1; k < plinko::ROWS; ++k) {
+            if (table[k] > maxInterior) maxInterior = table[k];
+        }
+        check(table[0] > maxInterior && table[plinko::ROWS] > maxInterior,
+              "edge buckets are jackpots (risk " + std::to_string(r) + ")");
+    }
+
+    // Documented house edges: EV strictly below 1.0, in the advertised range.
+    checkNear(plinko::expectedValue(plinko::Risk::LOW), 0.967, 0.005,
+              "LOW expected value ~0.967");
+    checkNear(plinko::expectedValue(plinko::Risk::MEDIUM), 0.936, 0.005,
+              "MEDIUM expected value ~0.936");
+    checkNear(plinko::expectedValue(plinko::Risk::HIGH), 0.8705, 0.005,
+              "HIGH expected value ~0.8705");
+    check(plinko::expectedValue(plinko::Risk::LOW) < 1.0
+              && plinko::expectedValue(plinko::Risk::HIGH) < 1.0,
+          "house keeps an edge at every risk level");
+
+    // Probabilities come from a fair binomial walk.
+    checkNear(plinko::bucketProbability(0)
+                  * std::pow(2.0, plinko::ROWS),
+              1.0, 1e-9,
+              "P(outermost bucket) is 1/2^ROWS");
+    checkNear(plinko::bucketProbability(5), 252.0 / 1024.0, 1e-12,
+              "center bucket probability is C(10,5)/2^10");
+    double total = 0.0;
+    for (int k = 0; k < plinko::BUCKETS; ++k) total += plinko::bucketProbability(k);
+    checkNear(total, 1.0, 1e-9, "bucket probabilities sum to 1");
+
+    // Simulation lands in range and matches the theoretical mean closely.
+    Rng& rng = Rng::global();
+    long sumBuckets = 0;
+    const int DROPS = 20000;
+    for (int i = 0; i < DROPS; ++i) {
+        const int b = plinko::dropBall(rng);
+        check(b >= 0 && b <= plinko::ROWS, "simulated drop stays on the board");
+        if (b < 0 || b > plinko::ROWS) return;   // avoid nonsense below on failure
+        sumBuckets += b;
+    }
+    const double simulatedMean = (double)sumBuckets / DROPS;
+    checkNear(simulatedMean, plinko::ROWS / 2.0, 0.15,
+              "20k simulated drops average near the center bucket");
+
+    // payout() math, including upgrade composition.
+    checkNear(plinko::payout(10.0, plinko::Risk::HIGH, 3, 1.0, 1.0), 10.0, 1e-9,
+              "payout scales bet by the bucket multiplier");
+    checkNear(plinko::payout(10.0, plinko::Risk::MEDIUM, 0, 1.0, 1.0), 60.0, 1e-9,
+              "edge bucket pays its jackpot multiplier");
+    checkNear(plinko::payout(10.0, plinko::Risk::MEDIUM, 0, 1.2, 1.0), 72.0, 1e-9,
+              "PLINKO_PAYOUT upgrade scales every bucket");
+    checkNear(plinko::payout(10.0, plinko::Risk::MEDIUM, 0, 1.0, 1.25), 75.0, 1e-9,
+              "PLINKO_EDGE upgrade scales edge buckets only");
+    checkNear(plinko::payout(10.0, plinko::Risk::MEDIUM, 5, 1.2, 1.25), 4.8, 1e-9,
+              "PLINKO_EDGE does not touch interior buckets");
+    checkEqual(plinko::isEdgeBucket(0) && plinko::isEdgeBucket(plinko::ROWS)
+                   && !plinko::isEdgeBucket(4),
+               true, "isEdgeBucket flags only the two outermost buckets");
+}
+
+// ============================================================================
+// RANDOM EVENTS
+// ============================================================================
+
+static void testEvents() {
+    suite("core/economy.h - random events (Phase D)");
+
+    checkEqual(economy::eventIncomeMultiplier(economy::EVENT_NONE), 1.0,
+               "no event means no income bonus");
+    checkEqual(economy::eventIncomeMultiplier(economy::EVENT_HAPPY_HOUR), 2.0,
+               "Happy Hour doubles passive income");
+    checkEqual(economy::eventIncomeMultiplier(economy::EVENT_HOT_STREAK), 1.0,
+               "Hot Streak does not touch passive income");
+    checkEqual(economy::eventIncomeMultiplier(99), 1.0,
+               "unknown event ids are inert (income)");
+
+    checkEqual(economy::eventPayoutMultiplier(economy::EVENT_HOT_STREAK), 1.5,
+               "Hot Streak multiplies game payouts by 1.5");
+    checkEqual(economy::eventPayoutMultiplier(economy::EVENT_HAPPY_HOUR), 1.0,
+               "Happy Hour does not touch game payouts");
+    checkEqual(economy::eventPayoutMultiplier(economy::EVENT_NONE), 1.0,
+               "no event means no payout bonus");
+    checkEqual(economy::eventPayoutMultiplier(-1), 1.0,
+               "unknown event ids are inert (payout)");
+
+    check(std::string(economy::eventName(economy::EVENT_HAPPY_HOUR)) == "Happy Hour",
+          "Happy Hour has a display name");
+    check(std::string(economy::eventName(economy::EVENT_NONE)).empty(),
+          "the none-event has no name");
+    check(std::string(economy::eventDescription(economy::EVENT_MONEY_RAIN)).size() > 0,
+          "Money Rain has a description");
+
+    check(economy::EVENT_DURATION_SECONDS == 60,
+          "duration events last 60 seconds");
+    check(economy::EVENT_MIN_GAP_SECONDS > economy::EVENT_DURATION_SECONDS,
+          "a new event cannot fire while one is still running");
+}
+
+// ============================================================================
 // MAIN
 // ============================================================================
 
@@ -861,6 +985,8 @@ int main() {
     testRng();
     testDeck();
     testEconomy();
+    testPlinko();
+    testEvents();
     testBanner();
     testSavePath();
     testChecksum();

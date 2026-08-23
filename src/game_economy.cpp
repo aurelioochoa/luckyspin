@@ -79,6 +79,7 @@ int GamblingGame::getAchievementCount() const {
     if (achAllUpgrades) count++;
     if (achPrestige1) count++;
     if (achPrestige5) count++;
+    if (achPlinkoJackpot) count++;
     return count;
 }
 
@@ -175,15 +176,21 @@ void GamblingGame::checkMilestones() {
 void GamblingGame::updatePassiveIncome() {
     // Get current time
     time_t now = time(0);
-    
+
     // Calculate seconds elapsed since last update
     // difftime() returns the difference between two time_t values in seconds
     double deltaSeconds = difftime(now, lastUpdateTime);
-    
+
     // Only update if at least some time has passed
     if (deltaSeconds > 0) {
-        // Calculate income earned during this period
-        double income = getTotalPassiveIncome() * deltaSeconds;
+        // Advance the random-event clock; a due event fires (and announces)
+        // here, and expired boosts switch off before this tick is paid out.
+        updateEvents(now);
+
+        // Calculate income earned during this period.
+        // Happy Hour doubles passive income while it is active (Phase D).
+        double income = getTotalPassiveIncome() * deltaSeconds
+                      * economy::eventIncomeMultiplier(activeEventId);
         
         // Add interest if unlocked (Phase C)
         if (interestUnlocked && money > 0) {
@@ -204,6 +211,75 @@ void GamblingGame::updatePassiveIncome() {
         // Check for milestone unlocks (Phase C)
         checkMilestones();
     }
+}
+
+/*
+ * updateEvents() - Advance the random-event clock (Phase D).
+ *
+ * Called from updatePassiveIncome() on every income tick. Three things can
+ * happen, in order:
+ *   1. An active duration event (Happy Hour / Hot Streak) past its expiry
+ *      switches off.
+ *   2. If no event is due yet, nothing else happens.
+ *   3. When an event is due, one is picked uniformly and announced:
+ *      Happy Hour or Hot Streak run for EVENT_DURATION_SECONDS, while Money
+ *      Rain pays out instantly instead of lingering.
+ *
+ * nextEventTime is re-scheduled BEFORE the event fires so a re-entrant call
+ * (e.g. a game action ticking income mid-round) can never double-fire.
+ */
+void GamblingGame::updateEvents(time_t now) {
+    // 1. Expire the active boost.
+    if (activeEventId != economy::EVENT_NONE && now >= eventEndTime) {
+        activeEventId = economy::EVENT_NONE;
+        eventEndTime = 0;
+    }
+
+    // 2. Nothing due yet.
+    if (now < nextEventTime) return;
+
+    // Re-schedule first: the gap is measured from when the last event fired.
+    nextEventTime = now + economy::EVENT_MIN_GAP_SECONDS
+                  + Rng::global().range(0, economy::EVENT_GAP_SPREAD_SECONDS);
+
+    // 3. Fire one event, uniformly chosen.
+    const int eventId = 1 + Rng::global().below(economy::EVENT_COUNT);
+
+    if (eventId == economy::EVENT_MONEY_RAIN) {
+        // Instant payout: about 30 seconds of passive income, floored so it
+        // still feels meaningful before the first generator exists.
+        double grant = getTotalPassiveIncome() * 30.0;
+        if (grant < 25.0) grant = 25.0;
+        money += grant;
+        lifetimeEarnings += grant;
+        updatePeakMoney();
+
+        showEvent(economy::eventName(eventId),
+                  string("+") + formatMoney(grant) + " "
+                      + economy::eventDescription(eventId));
+        // No lingering multiplier: nothing to activate or expire.
+    } else {
+        activeEventId = eventId;
+        eventEndTime = now + economy::EVENT_DURATION_SECONDS;
+
+        showEvent(economy::eventName(eventId), economy::eventDescription(eventId));
+    }
+}
+
+/*
+ * applyHotStreak() - Scale a game payout by the active event multiplier.
+ *
+ * Every wager-style game routes its win amount through this before paying
+ * out; with no event running it is an identity function. The Lucky Charm
+ * doubling in applyLuckyBonus() stacks multiplicatively on top.
+ */
+double GamblingGame::applyHotStreak(double amount) {
+    const double mult = economy::eventPayoutMultiplier(activeEventId);
+    if (mult == 1.0) return amount;
+
+    cout << "  " << Color::BG_MAGENTA << Color::BOLD << Color::WHITE
+         << " HOT STREAK x1.5 " << Color::RESET << "\n";
+    return amount * mult;
 }
 
 // ========================================================================

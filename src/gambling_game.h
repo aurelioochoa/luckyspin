@@ -135,6 +135,7 @@ private:
     bool achAllUpgrades;            // Max out all upgrades
     bool achPrestige1;              // Prestige for the first time
     bool achPrestige5;              // Reach prestige level 5
+    bool achPlinkoJackpot;          // Land in a Plinko edge (jackpot) bucket
     int currentWinStreak;           // Track consecutive wins for achievement
     
     // ========================================================================
@@ -172,6 +173,19 @@ private:
     // Interest/bank system (unlocked by milestone)
     bool interestUnlocked;          // Whether interest system is available
     double interestRate;            // Interest rate per second
+
+    // ========================================================================
+    // RANDOM EVENTS
+    // ========================================================================
+    /*
+     * Timed events fire every few minutes of active play and last 60 seconds
+     * (except Money Rain, which is an instant payout). Ids and multipliers
+     * are defined in core/economy.h next to the rest of the money math.
+     */
+
+    int activeEventId;              // 0=none, 1=Happy Hour, 2=Hot Streak, 3=Money Rain
+    time_t eventEndTime;            // When the active event expires
+    time_t nextEventTime;           // When the next event may trigger
     
     // ========================================================================
     // BLACKJACK SHOE
@@ -200,9 +214,11 @@ public:
     double getTotalPassiveIncome() const;
     void checkMilestones();
     void updatePassiveIncome();
+    void updateEvents(time_t now);
     void updatePeakMoney();
     bool canAffordBet();
     double applyLuckyBonus(double amount);
+    double applyHotStreak(double amount);
     void applyOfflineEarnings(time_t savedTimestamp);
     double getPrestigeRequirement() const;
     bool canPrestige() const;
@@ -227,6 +243,7 @@ public:
     void displayMenu();
     void displayStatus();
     void showAchievement(const string& name, const string& desc);
+    void showEvent(const string& name, const string& desc);
     void displayAchievements();
     void displayGameOver();
     void displayExitScreen();
@@ -238,6 +255,7 @@ public:
     void playSlots();
     void playBlackjack();
     void playRoulette();
+    void playPlinko();
 
     // ---- game_shops.cpp ----
     void displayUpgradeShop();
