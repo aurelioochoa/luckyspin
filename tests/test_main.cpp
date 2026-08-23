@@ -33,6 +33,14 @@
 #include "core/plinko.h"
 #include "core/roulette.h"
 #include "web/json.h"
+#include "web/server.h"
+
+#include <sys/socket.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <cstring>
+#include <string>
+
 #include "gambling_game.h"
 
 // ============================================================================
@@ -1263,6 +1271,212 @@ static void testBlackjackFlow() {
     }
 }
 
+// ============================================================================
+// WEB SERVER WIRE FORMAT (socketpair-driven; no ports, no threads)
+// ============================================================================
+
+namespace {
+
+// One full request/response exchange over a connected socketpair.
+struct Exchange {
+    bool wrote;
+    std::string response;
+};
+
+Exchange exchangeWith(const std::string& rawRequest,
+                      const web::Handler& handler) {
+    Exchange result{false, ""};
+    int sv[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        return result;
+    }
+
+    /*
+     * The server runs in a forked child: serveConnection blocks on recv(),
+     * so driving it from this same thread would deadlock before the
+     * request is ever written. _exit skips the harness's atexit handlers.
+     */
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::close(sv[1]);
+        web::serveConnection(sv[0], handler);
+        ::_exit(0);
+    }
+
+    ::close(sv[0]);
+    size_t sent = 0;
+    while (sent < rawRequest.size()) {
+        const ssize_t n = ::write(sv[1], rawRequest.data() + sent,
+                                  rawRequest.size() - sent);
+        if (n <= 0) break;
+        sent += (size_t)n;
+    }
+    result.wrote = (sent == rawRequest.size());
+    ::shutdown(sv[1], SHUT_WR);   // half-close so reads can hit EOF
+
+    char buf[4096];
+    ssize_t n;
+    while ((n = ::read(sv[1], buf, sizeof(buf))) > 0) {
+        result.response.append(buf, (size_t)n);
+    }
+    ::close(sv[1]);
+    ::waitpid(pid, nullptr, 0);
+    return result;
+}
+
+std::string headerValue(const std::string& response, const std::string& name) {
+    const size_t lineEnd = response.find("\r\n");
+    const size_t headersEnd = response.find("\r\n\r\n");
+    if (lineEnd == std::string::npos || headersEnd == std::string::npos) return "";
+    std::string headers = response.substr(lineEnd + 2, headersEnd - lineEnd - 2);
+    size_t pos = 0;
+    while (pos < headers.size()) {
+        size_t eol = headers.find("\r\n", pos);
+        if (eol == std::string::npos) eol = headers.size();
+        const std::string line = headers.substr(pos, eol - pos);
+        const size_t colon = line.find(':');
+        if (colon != std::string::npos) {
+            std::string key = line.substr(0, colon);
+            std::string value = line.substr(colon + 1);
+            while (!value.empty() && value[0] == ' ') value.erase(0, 1);
+            if (key == name) return value;
+        }
+        pos = eol + 2;
+    }
+    return "";
+}
+
+bool startsWith(const std::string& s, const char* prefix) {
+    return s.rfind(prefix, 0) == 0;
+}
+
+std::string bodyOf(const std::string& response) {
+    const size_t sep = response.find("\r\n\r\n");
+    return sep == std::string::npos ? "" : response.substr(sep + 4);
+}
+
+} // namespace
+
+static void testWebServer() {
+    suite("web/server.cpp - one connection over a socketpair");
+
+    // Echo handler for routing/body assertions.
+    web::Handler echo = [](const web::Request& req) {
+        web::Response res;   // C++11: no aggregate init with default members
+        res.contentType = "application/json";
+        res.body = "{\"method\":\"" + req.method +
+                   "\",\"path\":\"" + req.path +
+                   "\",\"body\":\"" + json::escape(req.body) + "\"}";
+        return res;
+    };
+
+    // ---- simple GET ----
+    {
+        const Exchange x = exchangeWith(
+            "GET /api/state HTTP/1.1\r\nHost: x\r\n\r\n", echo);
+        check(x.wrote, "GET request fully written");
+        check(startsWith(x.response, "HTTP/1.1 200 OK"),
+              "valid GET answers 200 OK");
+        checkEqual(headerValue(x.response, "Content-Length"),
+                   std::to_string(bodyOf(x.response).size()),
+                   "Content-Length matches the body");
+        checkEqual(headerValue(x.response, "Connection"), std::string("close"),
+                   "responses close the connection");
+        check(bodyOf(x.response).find("\"path\":\"/api/state\"") != std::string::npos,
+              "handler sees the request path");
+    }
+
+    // ---- POST with Content-Length body ----
+    {
+        const std::string body = "{\"action\":\"wheel\",\"bet\":10}";
+        const Exchange x = exchangeWith(
+            "POST /api/action HTTP/1.1\r\nContent-Length: "
+                + std::to_string(body.size()) + "\r\n\r\n" + body,
+            echo);
+        check(x.wrote, "POST request fully written");
+        check(bodyOf(x.response).find("\"method\":\"POST\"") != std::string::npos,
+              "POST method reaches the handler");
+        check(bodyOf(x.response).find(json::escape(body)) != std::string::npos,
+              "request body reaches the handler intact");
+    }
+
+    // ---- query string stripped ----
+    {
+        const Exchange x = exchangeWith(
+            "GET /api/state?poll=1&r=2 HTTP/1.1\r\n\r\n", echo);
+        check(bodyOf(x.response).find("\"path\":\"/api/state\"") != std::string::npos
+                  && bodyOf(x.response).find("poll") == std::string::npos,
+              "query strings are stripped from the path");
+    }
+
+    // ---- request split across partial writes still parses ----
+    {
+        int sv[2];
+        check(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0, "socketpair created");
+        const pid_t pid = ::fork();
+        if (pid == 0) {
+            ::close(sv[1]);
+            web::serveConnection(sv[0], echo);
+            ::_exit(0);
+        }
+        ::close(sv[0]);
+
+        std::string response;
+        const std::string part1 = "POST /a HTTP/1.1\r\nContent-Len";
+        const std::string part2 = "gth: 2\r\n\r\nhi";
+        ssize_t w = ::write(sv[1], part1.data(), part1.size());
+        check(w == (ssize_t)part1.size(), "partial header written");
+        usleep(50000);   // let the server consume the partial header first
+        w = ::write(sv[1], part2.data(), part2.size());
+        check(w == (ssize_t)part2.size(), "remainder written after the pause");
+        ::shutdown(sv[1], SHUT_WR);
+
+        char buf[4096];
+        ssize_t n;
+        while ((n = ::read(sv[1], buf, sizeof(buf))) > 0) response.append(buf, (size_t)n);
+        ::close(sv[1]);
+        ::waitpid(pid, nullptr, 0);
+        check(startsWith(response, "HTTP/1.1 200 OK"),
+              "split-header request reassembles correctly");
+        check(bodyOf(response).find("\"body\":\"hi\"") != std::string::npos,
+              "body after split headers is read via Content-Length");
+    }
+
+    // ---- malformed requests get 400 JSON ----
+    {
+        const Exchange x = exchangeWith("complete garbage no http\r\n\r\n", echo);
+        check(startsWith(x.response, "HTTP/1.1 400 Bad Request"),
+              "garbage request line answers 400");
+        check(bodyOf(x.response).find("malformed") != std::string::npos,
+              "400 body explains itself");
+    }
+    {
+        const Exchange x = exchangeWith("", echo);
+        check(!x.wrote || x.response.empty()
+                  || startsWith(x.response, "HTTP/1.1 400 Bad Request"),
+              "empty connection fails cleanly");
+    }
+    {
+        // Oversized declared body must be rejected, not buffered.
+        const Exchange x = exchangeWith(
+            "POST /api/action HTTP/1.1\r\nContent-Length: 9999999999\r\n\r\n", echo);
+        check(startsWith(x.response, "HTTP/1.1 400 Bad Request"),
+              "oversized Content-Length rejected");
+    }
+
+    // ---- unknown route is 404 ----
+    {
+        web::Handler notFound = [](const web::Request&) {
+            web::Response r;
+            r.status = 404;
+            r.body = "{\"ok\":false}";
+            return r;
+        };
+        const Exchange x = exchangeWith("GET /nope HTTP/1.1\r\n\r\n", notFound);
+        check(startsWith(x.response, "HTTP/1.1 404 Not Found"),
+              "unknown route answers 404");
+    }
+}
 
 int main() {
     std::cout << "\033[1mLucky Spin Casino - core unit tests\033[0m\n";
@@ -1280,6 +1494,7 @@ int main() {
     testActions();
     testBlackjackFlow();
     testWebJson();
+    testWebServer();
 
     std::cout << "\n" << std::string(60, '-') << "\n";
     if (g_failures == 0) {

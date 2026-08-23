@@ -348,13 +348,15 @@ Response runAction(GamblingGame& game, const json::FlatObject& action) {
         }
         result << "{\"round\":\"blackjack\"}";
     } else if (name == "bj_hit") {
-        const BlackjackSettlement s = game.blackjackHit();
-        if (s.outcome == BlackjackOutcome::None
-            && game.blackjackPhase() == BlackjackPhase::PlayerTurn) {
-            result << "{\"round\":\"blackjack\",\"drew\":true}";
-        } else {
-            result << "{\"round\":\"blackjack\",\"drew\":true,\"bust\":true}";
+        if (game.blackjackPhase() != BlackjackPhase::PlayerTurn) {
+            return errorResponse("No live hand to hit.");
         }
+        const size_t cardsBefore = game.bjPlayerCards().size();
+        const BlackjackSettlement s = game.blackjackHit();
+        const bool drew = game.bjPlayerCards().size() > cardsBefore;
+        result << "{\"round\":\"blackjack\",\"drew\":" << json::boolean(drew)
+               << ",\"bust\":" << json::boolean(s.outcome == BlackjackOutcome::PlayerBust)
+               << "}";
     } else if (name == "bj_stand") {
         const BlackjackSettlement s = game.blackjackStand();
         if (s.outcome == BlackjackOutcome::None) {

@@ -63,6 +63,14 @@ bool readRequest(int fd, Request& req) {
     if (sp1 == std::string::npos || sp2 == std::string::npos) return false;
     req.method = requestLine.substr(0, sp1);
     req.path = requestLine.substr(sp1 + 1, sp2 - sp1 - 1);
+
+    // Only the methods and path shapes this API speaks; anything else is a
+    // malformed request rather than a mystery route for the handler.
+    if ((req.method != "GET" && req.method != "POST" && req.method != "HEAD")
+        || req.path.empty() || req.path[0] != '/') {
+        return false;
+    }
+
     // Strip any query string; the API does not use one.
     const size_t q = req.path.find('?');
     if (q != std::string::npos) req.path.resize(q);
@@ -120,6 +128,25 @@ void sendResponse(int fd, const Response& res) {
 
 } // namespace
 
+void serveConnection(int fd, const Handler& handler) {
+    // 2s receive timeout: half-open connections fail cleanly instead of
+    // wedging the sequential accept loop.
+    struct timeval tv{2, 0};
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    Request req;
+    Response res;
+    if (!readRequest(fd, req)) {
+        res.status = 400;
+        res.contentType = "application/json";
+        res.body = "{\"ok\":false,\"message\":\"malformed request\"}";
+    } else {
+        res = handler(req);
+    }
+    sendResponse(fd, res);
+    ::close(fd);
+}
+
 /*
  * installStopHandler() - Catch INT/TERM without SA_RESTART.
  *
@@ -139,6 +166,7 @@ void installStopHandler(int sig) {
 int serveLoop(int port, const Handler& handler,
               const std::function<void()>& onShutdown,
               const std::function<void(int)>& onStart) {
+    g_stop = 0;   // a previous loop in this process may have set it
     installStopHandler(SIGINT);
     installStopHandler(SIGTERM);
     ::signal(SIGPIPE, SIG_IGN);
@@ -183,19 +211,7 @@ int serveLoop(int port, const Handler& handler,
             continue;
         }
 
-        struct timeval tv{2, 0};   // 2s receive timeout per request
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-        Request req;
-        Response res;
-        if (!readRequest(fd, req)) {
-            res.status = 400;
-            res.body = "{\"ok\":false,\"message\":\"malformed request\"}";
-        } else {
-            res = handler(req);
-        }
-        sendResponse(fd, res);
-        ::close(fd);
+        serveConnection(fd, handler);   // reads, dispatches, responds, closes
     }
 
     ::close(listenFd);
