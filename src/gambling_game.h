@@ -29,6 +29,89 @@
 // this here avoids touching every declaration.
 using namespace std;
 
+// ============================================================================
+// HEADLESS ROUND RESULTS
+// ============================================================================
+/*
+ * Every wager-style game is implemented once as a silent action method that
+ * mutates state and returns one of these structs. The terminal frontend and
+ * the web GUI both render from them, so the rules can never drift apart -
+ * and the money math can be exercised without a terminal at all.
+ */
+struct WheelRound {
+    bool played = false;     // false = bet could not be afforded
+    double bet = 0.0;
+    double payout = 0.0;     // total returned to balance (0 on loss)
+    bool won = false;
+    bool hotStreak = false;  // event multiplier applied
+    bool luckyBonus = false; // Lucky Charm doubled the win
+};
+
+struct SlotsRound {
+    bool played = false;
+    double bet = 0.0;
+    double payout = 0.0;
+    bool won = false;
+    int reels[3] = {-1, -1, -1}; // indices into Symbols::ALL
+    bool hotStreak = false;
+    bool luckyBonus = false;
+};
+
+struct RouletteRound {
+    bool played = false;
+    double bet = 0.0;
+    double payout = 0.0;
+    bool won = false;
+    int result = -1;         // winning pocket 0-36
+    int betType = 0;         // roulette::BetType as int
+    int chosenNumber = -1;   // only for BetType::Number
+    bool luckySeven = false; // landed on 7/17/27 with the upgrade owned
+    bool hotStreak = false;
+    bool luckyBonus = false;
+};
+
+struct PlinkoRound {
+    bool played = false;
+    double bet = 0.0;
+    double payout = 0.0;
+    bool jackpot = false;    // landed in an edge bucket
+    int bucket = -1;         // final bucket 0..ROWS
+    int risk = 0;            // plinko::Risk as int
+    vector<int> path;        // horizontal position after each row (for animation)
+    bool hotStreak = false;
+    bool luckyBonus = false;
+};
+
+// ============================================================================
+// BLACKJACK STATE MACHINE
+// ============================================================================
+/*
+ * One hand at a time. The terminal UI and the web API drive the same
+ * deal/hit/stand methods; both render from the exposed hands so there is a
+ * single source of truth for shoe draws, dealer play and payouts.
+ */
+enum class BlackjackPhase {
+    Idle,       // no hand in progress; betting allowed
+    PlayerTurn, // player must hit or stand
+    Settled     // hand finished; outcome available until the next deal
+};
+
+enum class BlackjackOutcome {
+    None, Win, Loss, Push, PlayerBust, Forfeited
+};
+
+struct BlackjackSettlement {
+    BlackjackOutcome outcome = BlackjackOutcome::None;
+    double bet = 0.0;
+    double payout = 0.0;      // total returned to balance (0 on loss/bust)
+    bool dealerBust = false;
+    bool playerNatural = false;
+    bool jinx = false;        // Dealer Jinx forced the bust card
+    bool hotStreak = false;
+    bool luckyBonus = false;
+    vector<cards::Card> dealerDraws; // cards pulled during dealer play
+};
+
 class GamblingGame {
 private:
     // ========================================================================
@@ -195,6 +278,24 @@ private:
      * makes the deck finite: cards already dealt are gone until it reshuffles.
      */
     cards::Shoe shoe;
+
+    // Live blackjack hand (see the state machine types above).
+    BlackjackPhase bjPhase;
+    vector<cards::Card> bjPlayer, bjDealer;
+    double bjBet;
+    BlackjackSettlement bjSettled;
+
+    // Shared tail of hit()/stand(): settles on a bust, no-op otherwise.
+    BlackjackSettlement blackjackStandFromHit(int newTotal);
+
+    /*
+     * Frontend-agnostic announcements. showAchievement/showEvent/showMilestone
+     * print immediately for the terminal AND queue here; the web GUI drains
+     * the queue on its next poll and renders toasts instead.
+     * Format: "kind|title|description" with kind in
+     * {achievement, event, milestone}.
+     */
+    vector<string> notificationQueue;
     
 public:
 
@@ -256,6 +357,65 @@ public:
     void playBlackjack();
     void playRoulette();
     void playPlinko();
+
+    // ---- game_actions.cpp (headless rules shared by both frontends) ----
+    // Wager rounds: silent, self-contained, achievement-aware.
+    WheelRound spinWheelRound(double bet);
+    SlotsRound playSlotsRound(double bet);
+    RouletteRound playRouletteRound(double bet, int betType, int chosenNumber);
+    PlinkoRound dropPlinkoBall(double bet, int risk);
+
+    // Blackjack state machine. deal() refuses when a hand is live or funds
+    // are short; stand() (or a busting hit) settles and stores bjSettled.
+    bool blackjackDeal(double bet);
+    BlackjackPhase blackjackPhase() const;
+    BlackjackSettlement blackjackHit();
+    BlackjackSettlement blackjackStand();
+    BlackjackSettlement blackjackForfeit();
+
+    // Shops, bet size, prestige core - silent on success patterns so the
+    // frontends can render their own feedback.
+    bool buyGeneratorCount(int index, int amount, double& costOut, int& boughtOut);
+    bool buyUpgradeLevel(int index, double& costOut);
+    bool buyPerkLevel(int perkIndex, int& costOut);
+    bool setBetAmount(double amount);
+    void setSpecializationId(int id);
+    int executePrestige();          // assumes canPrestige(); returns stars earned
+
+    // ---- snapshot getters (web API / tests) ----
+    double getMoney() const;
+    double getCurrentBet() const;
+    int getRound() const;
+    int getWins() const;
+    int getLosses() const;
+    double getPeakMoney() const;
+    double getLifetimeEarnings() const;
+    int getPrestigeLevel() const;
+    double getPrestigeMultiplier() const;
+    double getTotalLifetimeEarnings() const;
+    int getPrestigeStars() const;
+    const vector<Generator>& allGenerators() const;
+    const vector<Upgrade>& allUpgrades() const;
+    int getSpecializationId() const;
+    bool isInterestUnlocked() const;
+    double getInterestRate() const;
+
+    // Random-event snapshot: 0 when nothing is running.
+    int getActiveEventId() const;
+    time_t getActiveEventEndTime() const;
+    time_t getNextEventTime() const;
+
+    // Announcement queue: drains everything queued so far.
+    vector<string> takeNotifications();
+    void incrementRound();
+
+    // Live-hand accessors (dealer cards are visible to callers, which decide
+    // how to hide the hole card while the player is still drawing).
+    const vector<cards::Card>& bjPlayerCards() const;
+    const vector<cards::Card>& bjDealerCards() const;
+    double bjHandBet() const;
+    BlackjackOutcome bjLastOutcome() const;
+    const BlackjackSettlement& lastSettlement() const;
 
     // ---- game_shops.cpp ----
     void displayUpgradeShop();

@@ -5,13 +5,18 @@ INCLUDES = -I./src
 CXXFLAGS = $(CXXSTD) $(WARNINGS) -O2 $(INCLUDES)
 
 TARGET = gambling_game
-SRC = src/game_init.cpp src/game_economy.cpp src/game_display.cpp \
+SRC = src/game_init.cpp src/game_economy.cpp src/game_actions.cpp \
+      src/game_display.cpp \
       src/game_games.cpp src/game_shops.cpp src/game_save.cpp \
       src/game_loop.cpp src/main.cpp
 OBJ = $(SRC:.cpp=.o)
 
 TEST_TARGET = tests/run_tests
 TEST_SRC = tests/test_main.cpp
+
+# The test binary links every game object except main() so the headless
+# action layer (game_actions.cpp) can be exercised end-to-end.
+TEST_GAME_OBJ = $(filter-out src/main.o,$(OBJ))
 
 # Installation directories (user-level, no sudo required)
 PREFIX = $(HOME)/.local
@@ -39,16 +44,17 @@ $(TARGET): $(OBJ)
 test: $(TEST_TARGET)
 	@./$(TEST_TARGET)
 
-$(TEST_TARGET): $(TEST_SRC)
-	$(CXX) $(CXXFLAGS) -MMD -MP -o $(TEST_TARGET) $(TEST_SRC)
+$(TEST_TARGET): $(TEST_SRC) $(TEST_GAME_OBJ)
+	$(CXX) $(CXXFLAGS) -MMD -MP -o $(TEST_TARGET) $(TEST_SRC) $(TEST_GAME_OBJ)
 
 -include tests/run_tests.d
 
-# Run the tests under AddressSanitizer + UndefinedBehaviorSanitizer
+# Run the tests under AddressSanitizer + UndefinedBehaviorSanitizer.
+# Game sources are recompiled here so the whole program is instrumented.
 test-asan:
 	$(CXX) $(CXXSTD) $(WARNINGS) $(INCLUDES) -O1 -g \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
-		-o tests/run_tests_asan $(TEST_SRC)
+		-o tests/run_tests_asan $(TEST_SRC) $(TEST_GAME_OBJ:.o=.cpp)
 	./tests/run_tests_asan
 	@rm -f tests/run_tests_asan
 

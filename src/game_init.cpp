@@ -54,7 +54,8 @@ GamblingGame::GamblingGame() : money(100.0), betAmount(10.0), round(1),
                  achievementMultiplier(1.0), prestigeStars(0),
                  perkStartingMoney(0), perkGeneratorDiscount(0), perkOfflineCap(0), perkPassiveBoost(0),
                  specializationId(0), interestUnlocked(false), interestRate(0.001),
-                 activeEventId(0), eventEndTime(0), nextEventTime(0) {
+                 activeEventId(0), eventEndTime(0), nextEventTime(0),
+                 bjPhase(BlackjackPhase::Idle), bjBet(0.0) {
     // Initialize milestones as locked
     for (int i = 0; i < 10; i++) {
         milestoneUnlocked[i] = false;

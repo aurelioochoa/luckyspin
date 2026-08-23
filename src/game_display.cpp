@@ -65,6 +65,7 @@ void GamblingGame::displayHeader() {
  * showMilestone() - Display milestone unlock notification (Phase C)
  */
 void GamblingGame::showMilestone(const string& name, const string& desc) {
+    notificationQueue.push_back("milestone|" + name + "|" + desc);
     cout << "\n";
     cout << "  " << Color::BG_YELLOW << Color::BLACK << Color::BOLD 
          << " 🏆 MILESTONE UNLOCKED! 🏆 " << Color::RESET << "\n";
@@ -266,10 +267,13 @@ void GamblingGame::displayStatus() {
 
 /*
  * showAchievement() - Display achievement unlock notification
+ *
+ * Also queued for the web GUI, which renders it as a toast on its next poll.
  */
 void GamblingGame::showAchievement(const string& name, const string& desc) {
+    notificationQueue.push_back("achievement|" + name + "|" + desc);
     cout << "\n";
-    cout << "  " << Color::BG_YELLOW << Color::BLACK << Color::BOLD 
+    cout << "  " << Color::BG_YELLOW << Color::BLACK << Color::BOLD
          << " ★ ACHIEVEMENT UNLOCKED! ★ " << Color::RESET << "\n";
     cout << "  " << Color::YELLOW << name << Color::RESET << "\n";
     cout << "  " << Color::DIM << desc << Color::RESET << "\n";
@@ -283,6 +287,7 @@ void GamblingGame::showAchievement(const string& name, const string& desc) {
  * with a short pause so it is readable before the next redraw.
  */
 void GamblingGame::showEvent(const string& name, const string& desc) {
+    notificationQueue.push_back("event|" + name + "|" + desc);
     cout << "\n";
     cout << "  " << Color::BG_MAGENTA << Color::WHITE << Color::BOLD
          << " \xE2\x9A\xA1 CASINO EVENT! \xE2\x9A\xA1 " << Color::RESET << "\n";

@@ -42,16 +42,16 @@ static std::string g_currentSuite;
 
 static void suite(const std::string& name) {
     g_currentSuite = name;
-    std::cout << "\n\033[1;36m" << name << "\033[0m\n";
+    std::cerr << "\n\033[1;36m" << name << "\033[0m\n";
 }
 
 static void check(bool condition, const std::string& what) {
     ++g_checks;
     if (condition) {
-        std::cout << "  \033[32mPASS\033[0m " << what << "\n";
+        std::cerr << "  \033[32mPASS\033[0m " << what << "\n";
     } else {
         ++g_failures;
-        std::cout << "  \033[31mFAIL\033[0m " << what << "\n";
+        std::cerr << "  \033[31mFAIL\033[0m " << what << "\n";
     }
 }
 
@@ -59,10 +59,10 @@ template <typename T>
 static void checkEqual(const T& actual, const T& expected, const std::string& what) {
     ++g_checks;
     if (actual == expected) {
-        std::cout << "  \033[32mPASS\033[0m " << what << "\n";
+        std::cerr << "  \033[32mPASS\033[0m " << what << "\n";
     } else {
         ++g_failures;
-        std::cout << "  \033[31mFAIL\033[0m " << what
+        std::cerr << "  \033[31mFAIL\033[0m " << what
                   << "  (expected \"" << expected << "\", got \"" << actual << "\")\n";
     }
 }
@@ -71,10 +71,10 @@ static void checkNear(double actual, double expected, double tolerance,
                       const std::string& what) {
     ++g_checks;
     if (std::fabs(actual - expected) <= tolerance) {
-        std::cout << "  \033[32mPASS\033[0m " << what << "\n";
+        std::cerr << "  \033[32mPASS\033[0m " << what << "\n";
     } else {
         ++g_failures;
-        std::cout << "  \033[31mFAIL\033[0m " << what
+        std::cerr << "  \033[31mFAIL\033[0m " << what
                   << "  (expected " << expected << " +/-" << tolerance
                   << ", got " << actual << ")\n";
     }
@@ -973,9 +973,242 @@ static void testEvents() {
           "a new event cannot fire while one is still running");
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
+// ===========================================================================
+// HEADLESS ACTIONS (integration: the real GamblingGame engine)
+// ===========================================================================
+
+#include "gambling_game.h"
+#include "core/roulette.h"
+
+// Shared-code announcements (achievements, events, milestones) print and
+// usleep(); tests silence stdout so the report stays readable.
+struct SilenceCout {
+    std::ostringstream sink;
+    std::streambuf* old;
+    SilenceCout() : old(std::cout.rdbuf(sink.rdbuf())) {}
+    ~SilenceCout() { std::cout.rdbuf(old); }
+};
+
+static bool nearEnough(double a, double b) { return std::fabs(a - b) <= 1e-6; }
+
+// Deterministic payout expectations rely on base upgrade values:
+//   WHEEL_PAYOUT 2.0, SLOTS_PAYOUT 5.0, BLACKJACK_PAYOUT 2.0 (+0.5 natural),
+//   ROULETTE_PAYOUT 2.0 / 35x numbers, LUCKY_BONUS 0% (never doubles).
+static void testActions() {
+    suite("game_actions.cpp - headless rounds and shops");
+
+    SilenceCout quiet;
+    GamblingGame game;
+
+    // ---- wheel ----
+    const double startBalance = game.getMoney();
+    WheelRound r = game.spinWheelRound(10.0);
+    check(r.played, "affordable wheel bet plays");
+    checkNear(game.getMoney(), startBalance - 10.0 + r.payout, 1e-9,
+              "wheel balance moves by exactly -bet +payout");
+    if (r.won) {
+        checkNear(r.payout, 20.0, 1e-9,
+                  "base wheel win pays 2x with no bonuses owned");
+        checkEqual((int)r.luckyBonus, 0, "no Lucky Charm means no lucky flag");
+    } else {
+        checkEqual(r.payout, 0.0, "lost wheel round pays nothing");
+    }
+
+    WheelRound poor = game.spinWheelRound(1e12);
+    check(!poor.played, "unaffordable wheel bet is refused");
+    check(!game.spinWheelRound(-5.0).played, "negative bet is refused");
+    checkNear(game.getMoney(), startBalance - 10.0 + r.payout, 1e-9,
+              "refused bets leave the balance untouched");
+
+    // ---- slots ----
+    SlotsRound s = game.playSlotsRound(10.0);
+    check(s.played, "affordable slots bet plays");
+    const bool triple = s.reels[0] == s.reels[1] && s.reels[1] == s.reels[2];
+    checkEqual((int)triple, (int)s.won, "slots win iff reels match");
+    for (int i = 0; i < 3; ++i) {
+        check(s.reels[i] >= 0 && s.reels[i] < Symbols::COUNT,
+              "slot reel index in range");
+    }
+    if (triple) {
+        checkNear(s.payout, 50.0, 1e-9,
+                  "base slots win pays 5x with no bonuses owned");
+    } else {
+        checkEqual(s.payout, 0.0, "losing slots round pays nothing");
+    }
+
+    // ---- roulette ----
+    RouletteRound rr = game.playRouletteRound(10.0, 1, -1); // Red
+    check(rr.played && rr.result >= 0 && rr.result <= 36,
+          "red bet spins a valid pocket");
+    checkEqual((int)rr.won,
+               (int)(rr.result != 0 && roulette::isRed(rr.result)),
+               "red bet settles per core/roulette.h");
+
+    RouletteRound badNum = game.playRouletteRound(10.0, 5, 37);
+    check(!badNum.played, "number bet outside 0-36 is refused");
+    RouletteRound numOk = game.playRouletteRound(10.0, 5, 7);
+    check(numOk.played, "number bet on 7 is accepted");
+    if (numOk.won) {
+        checkNear(numOk.payout, 350.0, 1e-9,
+                  "straight number pays 35x at base upgrades");
+        check(numOk.luckySeven, "landing on 7 flags Lucky Seven");
+    }
+    check(!game.playRouletteRound(10.0, 0, -1).played,
+          "bet type 0 cancels cleanly");
+
+    // ---- plinko ----
+    PlinkoRound p = game.dropPlinkoBall(10.0, 2); // HIGH risk
+    check(p.played, "plinko drop plays");
+    checkEqual((int)p.path.size(), plinko::ROWS + 1,
+               "ball path covers every row");
+    bool pathSane = true;
+    for (int i = 1; i <= plinko::ROWS; ++i) {
+        if (p.path[i] != p.path[i - 1] && p.path[i] != p.path[i - 1] + 1) {
+            pathSane = false;
+        }
+    }
+    check(pathSane, "path steps are single left/right bounces");
+    checkEqual(p.bucket, p.path[plinko::ROWS],
+               "final bucket equals last path position");
+    checkEqual((int)p.jackpot, (int)plinko::isEdgeBucket(p.bucket),
+               "jackpot flag matches edge buckets");
+    if (p.jackpot) {
+        // 35x table, x1 upgrades, no Hot Streak/Lucky active in tests.
+        check(p.payout >= p.bet * 34.9, "HIGH-risk jackpot pays ~35x");
+    }
+
+    // ---- shops ----
+    // Fresh instance for deterministic balances ($100 start).
+    SilenceCout quiet2;
+    GamblingGame shopGame;
+
+    // Upgrades first: level 1 of "Lucky Wheel" costs exactly 100.
+    double upgCost = 0.0;
+    check(shopGame.buyUpgradeLevel(0, upgCost), "level 1 buys with exact funds");
+    checkNear(upgCost, 100.0, 1e-9, "first level charged its base cost");
+    check(!shopGame.buyUpgradeLevel(0, upgCost),
+          "next level refused when unaffordable");
+    checkNear(upgCost, 250.0, 1e-9,
+              "refusal reports the next level's cost (100 x 2.5)");
+    check(!shopGame.allUpgrades()[0].isMaxed(),
+          "upgrade is not maxed, refusal was purely financial");
+
+    // Generators: charge must match economy::bulkCost over the PRE state.
+    const Generator jarBefore = shopGame.allGenerators()[0]; // owned == 0 copy
+    double cost = 0.0;
+    int bought = 0;
+    check(!shopGame.buyGeneratorCount(0, 3, cost, bought),
+          "3 Tip Jars refused - balance spent on the upgrade");
+    checkEqual(bought, 0, "refused purchase buys nothing");
+    checkNear(cost, economy::bulkCost(jarBefore, 3, 1.0), 1e-6,
+              "refusal still quotes the correct bulk price");
+    check(!shopGame.buyGeneratorCount(99, 1, cost, bought),
+          "out-of-range generator index refused");
+    checkEqual(bought, 0, "out-of-range purchase buys nothing");
+
+    // ---- bet / specialization guards ----
+    check(!shopGame.setBetAmount(-1.0), "negative bet rejected");
+    check(!shopGame.setBetAmount(1e12), "bet above balance rejected");
+    shopGame.setSpecializationId(5);
+    checkEqual(shopGame.getSpecializationId(), 5, "Plinko Pro specialization stored");
+    shopGame.setSpecializationId(9);                    // out of range: ignored
+    checkEqual(shopGame.getSpecializationId(), 5, "invalid specialization ignored");
+
+    // Funded instance exercises successful purchases end-to-end.
+    GamblingGame funded;
+    const double fundedStart = funded.getMoney();
+    check(funded.buyGeneratorCount(0, 3, cost, bought), "buying 3 Tip Jars succeeds");
+    checkEqual(bought, 3, "purchase reports quantity bought");
+    checkNear(cost, economy::bulkCost(Generator(jarBefore), 3, 1.0), 1e-6,
+              "charged cost matches economy::bulkCost");
+    checkNear(funded.getMoney(), fundedStart - cost, 1e-9,
+              "purchase deducts exactly the bulk cost");
+    check(funded.buyGeneratorCount(0, 0, cost, bought), "MAX mode buys");
+    check(bought >= 1, "MAX mode buys at least one more");
+    check(funded.setBetAmount(5.0), "valid bet accepted with funds");
+}
+
+static void testBlackjackFlow() {
+    suite("game_actions.cpp - blackjack state machine");
+
+    SilenceCout quiet;
+    GamblingGame game;
+
+    check(game.blackjackDeal(25.0), "first deal succeeds");
+    check(game.blackjackPhase() == BlackjackPhase::PlayerTurn,
+          "phase is PlayerTurn after deal");
+    checkEqual(game.bjPlayerCards().size(), (size_t)2, "player holds two cards");
+    checkEqual(game.bjDealerCards().size(), (size_t)2, "dealer holds two cards");
+    check(!game.blackjackDeal(25.0), "second deal while a hand is live is refused");
+
+    const double midBalance = game.getMoney();
+    const int statsBefore = game.getWins() + game.getLosses();
+
+    BlackjackSettlement settled = game.blackjackStand();
+    check(game.blackjackPhase() == BlackjackPhase::Settled,
+          "stand settles the hand");
+    check(settled.outcome != BlackjackOutcome::None,
+          "settlement carries an outcome");
+
+    const int pt = cards::handTotal(game.bjPlayerCards());
+    const int dt = cards::handTotal(game.bjDealerCards());
+    check(pt <= 21, "player total legal after dealer play");
+
+    switch (settled.outcome) {
+        case BlackjackOutcome::Win:
+            check(dt > 21 || pt > dt,
+                  "win implies dealer bust or higher player total");
+            check(settled.playerNatural ? nearEnough(settled.payout, settled.bet * 2.5)
+                                        : nearEnough(settled.payout, settled.bet * 2.0),
+                      "win pays 2x, natural 2.5x (no bonuses owned)");
+            break;
+        case BlackjackOutcome::Loss:
+            check(dt <= 21 && dt > pt, "loss implies dealer stands higher");
+            checkEqual(settled.payout, 0.0, "loss returns nothing");
+            break;
+        case BlackjackOutcome::Push:
+            checkEqual(pt, dt, "push totals equal");
+            checkNear(settled.payout, settled.bet, 1e-9, "push returns the bet");
+            break;
+        default:
+            check(false, "stand produced an unexpected outcome");
+    }
+    checkNear(game.getMoney(), midBalance + settled.payout, 1e-9,
+              "balance moved by exactly the settlement payout");
+    checkEqual(statsBefore + ((settled.outcome == BlackjackOutcome::Push) ? 0 : 1),
+               game.getWins() + game.getLosses(),
+               "round counted once (pushes are neither)");
+
+    // Forfeit only applies to a live hand.
+    check(game.blackjackDeal(25.0), "next deal succeeds after settle");
+    BlackjackSettlement f = game.blackjackForfeit();
+    check(f.outcome == BlackjackOutcome::Forfeited, "forfeit records forfeiture");
+    checkEqual(f.payout, 0.0, "forfeiture returns nothing");
+    check(game.blackjackForfeit().outcome == BlackjackOutcome::None,
+          "forfeit ignored when no hand is live");
+
+    // Aggressive hitting must either bust (instant settle) or reach 21.
+    const double preBust = game.getMoney();
+    check(game.blackjackDeal(25.0), "deal for the hitting test");
+    int guard = 0;
+    BlackjackSettlement end{};
+    while (game.blackjackPhase() == BlackjackPhase::PlayerTurn && guard++ < 12) {
+        if (cards::handTotal(game.bjPlayerCards()) >= 21) break;
+        end = game.blackjackHit();
+    }
+    const int finalTotal = cards::handTotal(game.bjPlayerCards());
+    check(finalTotal >= 17, "aggressive hitting reaches a high total");
+    if (finalTotal > 21) {
+        check(end.outcome == BlackjackOutcome::PlayerBust,
+              "an over-21 hit settles as an instant bust");
+        checkNear(game.getMoney(), preBust - 25.0, 1e-9,
+                  "bust costs exactly one bet");
+    } else if (finalTotal == 21) {
+        check(game.blackjackHit().outcome == BlackjackOutcome::None,
+              "hit at 21 is ignored");
+    }
+}
+
 
 int main() {
     std::cout << "\033[1mLucky Spin Casino - core unit tests\033[0m\n";
@@ -990,6 +1223,8 @@ int main() {
     testBanner();
     testSavePath();
     testChecksum();
+    testActions();
+    testBlackjackFlow();
 
     std::cout << "\n" << std::string(60, '-') << "\n";
     if (g_failures == 0) {

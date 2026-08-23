@@ -148,34 +148,24 @@ void GamblingGame::displayUpgradeShop() {
  *   - index: Index of the upgrade in the upgrades vector
  */
 void GamblingGame::purchaseUpgrade(int index) {
-    if (index < 0 || index >= (int)upgrades.size()) {
-        return;
-    }
-    
-    Upgrade& upg = upgrades[index];
-    
-    if (upg.isMaxed()) {
-        cout << "\n  " << Color::YELLOW << "Already at max level!" << Color::RESET;
-        usleep(800000);
-        return;
-    }
-    
-    double cost = upg.getCurrentCost();
-    
-    if (money >= cost) {
-        money -= cost;
-        upg.purchase();
-        
-        cout << "\n  " << Color::GREEN << UI::CHECK << " Upgraded " << upg.getName() 
+    double cost = 0.0;
+    if (buyUpgradeLevel(index, cost)) {
+        const Upgrade& upg = upgrades[index];
+        cout << "\n  " << Color::GREEN << UI::CHECK << " Upgraded " << upg.getName()
              << " to Lv." << upg.getCurrentLevel() << "!" << Color::RESET;
-        cout << "\n  " << Color::DIM << "New value: " << fixed << setprecision(1) 
+        cout << "\n  " << Color::DIM << "New value: " << fixed << setprecision(1)
              << upg.getCurrentValue() << Color::RESET;
-        
         usleep(800000);
-    } else {
-        cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough money! Need " 
-             << formatMoney(cost) << Color::RESET;
-        usleep(800000);
+    } else if (index >= 0 && index < (int)upgrades.size()) {
+        const Upgrade& upg = upgrades[index];
+        if (upg.isMaxed()) {
+            cout << "\n  " << Color::YELLOW << "Already at max level!" << Color::RESET;
+            usleep(800000);
+        } else {
+            cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough money! Need "
+                 << formatMoney(cost) << Color::RESET;
+            usleep(800000);
+        }
     }
 }
 
@@ -358,24 +348,19 @@ void GamblingGame::displayPrestigeShop() {
             if (shopSelection == PERK_COUNT) {
                 inShop = false;
             } else {
-                // Try to purchase perk
+                // Purchase through the shared headless action, then report.
                 PerkInfo& perk = perks[shopSelection];
-                int level = *(perk.currentLevel);
-                if (level < perk.maxLevel) {
-                    int cost = perk.baseCost + (level * 2);
-                    if (prestigeStars >= cost) {
-                        prestigeStars -= cost;
-                        (*(perk.currentLevel))++;
-                        cout << "\n  " << Color::GREEN << UI::CHECK << " Purchased " 
-                             << perk.name << " (Level " << (*(perk.currentLevel)) << ")!" << Color::RESET;
-                        usleep(800000);
-                    } else {
-                        cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough stars! Need " 
-                             << cost << " ★" << Color::RESET;
-                        usleep(800000);
-                    }
-                } else {
+                int cost = 0;
+                if (buyPerkLevel(shopSelection, cost)) {
+                    cout << "\n  " << Color::GREEN << UI::CHECK << " Purchased "
+                         << perk.name << " (Level " << (*(perk.currentLevel)) << ")!" << Color::RESET;
+                    usleep(800000);
+                } else if (*(perk.currentLevel) >= perk.maxLevel) {
                     cout << "\n  " << Color::YELLOW << "Already at max level!" << Color::RESET;
+                    usleep(800000);
+                } else {
+                    cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough stars! Need "
+                         << cost << "\xE2\x98\x85" << Color::RESET;
                     usleep(800000);
                 }
             }
@@ -440,8 +425,8 @@ void GamblingGame::displaySpecializationMenu() {
     if (choice >= '0' && choice <= '0' + SPEC_COUNT) {
         int newSpec = choice - '0';
         if (newSpec != specializationId) {
-            specializationId = newSpec;
-            cout << "\n  " << Color::GREEN << UI::CHECK << " Specialization changed to: " 
+            setSpecializationId(newSpec);
+            cout << "\n  " << Color::GREEN << UI::CHECK << " Specialization changed to: "
                  << specNames[newSpec] << Color::RESET;
             usleep(1000000);
         }
@@ -449,53 +434,22 @@ void GamblingGame::displaySpecializationMenu() {
 }
 
 /*
- * performPrestige() - Execute the prestige reset
+ * performPrestige() - Confirm, then run the shared prestige core
  */
 void GamblingGame::performPrestige() {
     // Confirm prestige
-    cout << "\n\n  " << Color::YELLOW << "Are you sure? This will reset your progress!" 
+    cout << "\n\n  " << Color::YELLOW << "Are you sure? This will reset your progress!"
          << Color::RESET << "\n";
     cout << "  " << Color::CYAN << "[Y]" << Color::RESET << " Yes  "
          << Color::CYAN << "[N]" << Color::RESET << " No\n";
     cout << "  Choice: ";
-    
+
     char confirm = getch();
     if (confirm != 'y' && confirm != 'Y') {
         return;
     }
-    
-    // Calculate prestige stars earned (Phase B)
-    int starsEarned = calculatePrestigeStars();
-    prestigeStars += starsEarned;
-    
-    // Perform prestige
-    prestigeLevel++;
-    prestigeMultiplier += 0.1;
-    totalLifetimeEarnings += lifetimeEarnings;
-    
-    // Reset progress (apply starting money perk)
-    money = getStartingMoneyFromPerk();
-    betAmount = 10.0;
-    round = 1;
-    totalWins = 0;
-    totalLosses = 0;
-    peakMoney = money;
-    lifetimeEarnings = 0.0;
-    currentWinStreak = 0;
-    
-    // Reset generators
-    for (auto& gen : generators) {
-        gen.setOwned(0);
-    }
-    
-    // Reset upgrades
-    for (auto& upg : upgrades) {
-        upg.setLevel(0);
-    }
-    
-    // Check prestige achievements (Phase B)
-    checkPrestigeAchievements();
-    
+
+    const int starsEarned = executePrestige();
     // Show success message
     clearScreen();
     displayHeader();
@@ -676,54 +630,26 @@ void GamblingGame::displayGeneratorShop() {
  * 3. Adds one to the generator's owned count
  */
 void GamblingGame::purchaseGenerator(int index, int amount) {
-    // Bounds checking - make sure index is valid
-    if (index < 0 || index >= (int)generators.size()) {
-        return;
-    }
-    
-    Generator& gen = generators[index];
+    double cost = 0.0;
+    int bought = 0;
 
-    int purchaseAmount = amount;
-    if (purchaseAmount < 0) purchaseAmount = 1;
-
-    if (purchaseAmount == 0) {
-        purchaseAmount = getGeneratorMaxAffordable(gen, money);
-        if (purchaseAmount <= 0) {
-            double singleCost = gen.getCurrentCost();
-            cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough money! Need " 
-                 << formatMoney(singleCost) << Color::RESET;
-            usleep(800000);
-            return;
-        }
-    }
-
-    if (purchaseAmount > INT_MAX - gen.getOwned()) {
-        purchaseAmount = INT_MAX - gen.getOwned();
-    }
-    if (purchaseAmount <= 0) {
-        return;
-    }
-
-    double cost = getGeneratorBulkCost(gen, purchaseAmount);
-     
-    if (money >= cost) {
-        money -= cost;
-        gen.setOwned(gen.getOwned() + purchaseAmount);
-         
+    if (buyGeneratorCount(index, amount, cost, bought)) {
+        Generator& gen = generators[index];
         cout << "\n  " << Color::GREEN << UI::CHECK << " Purchased ";
-        if (purchaseAmount == 1) {
+        if (bought == 1) {
             cout << gen.getName();
         } else {
-            cout << purchaseAmount << "x " << gen.getName();
+            cout << bought << "x " << gen.getName();
         }
         cout << "!" << Color::RESET;
-        cout << "\n  " << Color::DIM << "You now own " << gen.getOwned() 
-             << " and earn +$" << fixed << setprecision(2) 
+        cout << "\n  " << Color::DIM << "You now own " << gen.getOwned()
+             << " and earn +$" << fixed << setprecision(2)
              << gen.getIncomePerSecond() << "/sec from them." << Color::RESET;
-         
         usleep(800000);
-    } else {
-        cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough money! Need " 
+    } else if (index >= 0 && index < (int)generators.size()) {
+        // Unaffordable: costOut carries either the bulk price or the single
+        // unit price when MAX mode could not afford even one.
+        cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough money! Need "
              << formatMoney(cost) << Color::RESET;
         usleep(800000);
     }
