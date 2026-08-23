@@ -1,5 +1,13 @@
 # Gameplay Improvements (Incremental Design)
 
+> **Status: fully implemented.** All four phases below are live as of 2026:
+> Phase A (bulk buy), Phase B (achievement rewards, prestige stars + shop),
+> Phase C (milestones, specialization incl. Plinko Pro, synergies, interest),
+> and Phase D (random events: Happy Hour / Hot Streak / Money Rain). Plinko
+> itself was added as a fifth game. The rules live in headless code
+> (`src/game_actions.cpp`, `src/core/`) shared by both the terminal UI and
+> the web GUI; see `README.md` for player-facing docs.
+
 This document proposes gameplay improvements for **Lucky Spin Casino**, with a focus on strengthening long-term progression, decision-making, and pacing typical of incremental/idle games.
 
 ## Goals

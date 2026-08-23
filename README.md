@@ -1,6 +1,6 @@
 # 🎰 Lucky Spin Casino
 
-A terminal-based incremental gambling game written in C++ for Linux.
+A terminal- and browser-based incremental gambling game written in C++ for Linux.
 
 ![C++11](https://img.shields.io/badge/C%2B%2B-11-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)
@@ -17,6 +17,7 @@ A terminal-based incremental gambling game written in C++ for Linux.
 - 🎰 **Slot Machine** - Match symbols for jackpots
 - 🃏 **Blackjack** - Classic 21 card game
 - 🎲 **Roulette** - Bet on colors, numbers, odd/even
+- 🎯 **Plinko** - Drop a ball through 10 rows of pegs across three risk levels
 
 #### 💰 Progression Systems
 - 🏪 **Generator Shop** - Buy passive income sources with bulk buy (x1/x10/x25/x100/MAX)
@@ -29,6 +30,16 @@ A terminal-based incremental gambling game written in C++ for Linux.
 - ⭐ **Prestige Stars** - Spendable currency earned from prestige
 - 🛒 **Prestige Shop** - Permanent perks (starting money, generator discounts, passive boost, offline cap)
 - 📈 **Achievement Rewards** - Each achievement grants +1% permanent income bonus
+
+#### ⚡ Random Events (Phase D)
+- 🍸 **Happy Hour** - Passive income doubled for 60 seconds
+- 🔥 **Hot Streak** - All game payouts x1.5 for 60 seconds
+- 💸 **Money Rain** - Instant cash payout (~30 seconds of income)
+
+#### 🖥️ Web GUI
+- Run `make gui` and play at `http://127.0.0.1:8787/` in any browser
+- Animated wheel, slot reels, canvas Plinko board and blackjack table
+- Same rules as the terminal version - one shared headless engine
 
 #### 🎯 Strategic Depth (Phase C)
 - 🏆 **Milestones** - Unlock new mechanics at progression thresholds
@@ -54,9 +65,16 @@ cd lucky-spin-casino
 # Build the game
 make
 
-# Run the game
+# Run the terminal UI
 make run
+
+# Or run the web GUI (opens http://127.0.0.1:8787/)
+make gui
 ```
+
+The web GUI binds to 127.0.0.1 only, auto-saves after every action, and
+keeps passive income ticking while the page is open. Flags: `--port N`
+(default 8787), `--no-open` to suppress launching a browser.
 
 ### Install as Command
 
@@ -93,21 +111,23 @@ lucky-spin-casino/
 │   ├── GDD.md           # Game Design Document
 │   └── GAMEPLAY_IMPROVEMENTS.md
 ├── src/
-│   ├── main.cpp         # Program entry point
-│   ├── gambling_game.h  # GamblingGame class declaration
-│   ├── menu.h           # Main menu table (MenuAction/MenuEntry)
-│   ├── game_init.cpp    # Construction + generator/upgrade definitions
-│   ├── game_economy.cpp # Economy glue (delegates to core/economy.h)
-│   ├── game_display.cpp # Terminal rendering (header, stats, menus)
-│   ├── game_games.cpp   # Playable games (wheel, slots, blackjack, roulette)
-│   ├── game_shops.cpp   # Shops, prestige, specialization
-│   ├── game_save.cpp    # Persistence (atomic save/load, checksum)
-│   ├── game_loop.cpp    # Main loop + menu dispatch
-│   ├── colors.h         # ANSI color definitions
-│   ├── unicode.h        # Unicode codepoint constants
-│   ├── symbols.h        # Game-facing symbol sets (Symbols/Cards/UI)
-│   ├── utils.h          # Terminal I/O, display-width helpers
-│   └── core/            # Pure game logic (unit-testable)
+│   ├── main.cpp          # Entry point: terminal UI or --gui web server
+│   ├── gambling_game.h   # GamblingGame class declaration
+│   ├── menu.h            # Main menu table (MenuAction/MenuEntry)
+│   ├── game_init.cpp     # Construction + generator/upgrade definitions
+│   ├── game_economy.cpp  # Economy glue (delegates to core/economy.h)
+│   ├── game_actions.cpp  # Headless rules shared by both frontends
+│   ├── game_display.cpp  # Terminal rendering (header, stats, menus)
+│   ├── game_games.cpp    # Terminal rendering of the playable games
+│   ├── game_shops.cpp    # Shops, prestige, specialization
+│   ├── game_save.cpp     # Persistence (atomic save/load, checksum)
+│   ├── game_loop.cpp     # Main loop + menu dispatch
+│   ├── web/              # Embedded web GUI (HTTP server + JSON API)
+│   ├── colors.h          # ANSI color definitions
+│   ├── unicode.h         # Unicode codepoint constants
+│   ├── symbols.h         # Game-facing symbol sets (Symbols/Cards/UI)
+│   ├── utils.h           # Terminal I/O, display-width helpers
+│   └── core/             # Pure game logic (unit-testable)
 ├── tests/               # Unit tests
 └── test_unicode.cpp     # Unicode compatibility test
 ```
@@ -117,7 +137,9 @@ lucky-spin-casino/
 | Command | Description |
 |---------|-------------|
 | `make` | Build the game |
-| `make run` | Build and run |
+| `make run` | Build and run the terminal UI |
+| `make gui` | Build and serve the web GUI |
+| `make test` | Run the unit/integration test suite |
 | `make clean` | Remove build files |
 | `make install` | Install as `lucky-spin` command |
 | `make uninstall` | Remove installed command |
@@ -165,10 +187,13 @@ EARN → UPGRADE → AUTOMATE → PRESTIGE → SPECIALIZE
 | Penny Slots | 🎰 | $0.5/sec | $50 | Old-school one-armed bandits |
 | Auto-Wheel | 🎡 | $2/sec | $200 | A mechanical wheel that spins itself |
 | Card Shark | 🃏 | $5/sec | $500 | A skilled dealer who finds an edge |
-| VIP Table | 👑 | $15/sec | $1,500 | Exclusive high-stakes table |
-| High Roller | 💎 | $50/sec | $5,000 | Wealthy patron who tips big |
-| Casino Floor | 🏛️ | $200/sec | $20,000 | Entire floor generating revenue |
-| Casino Empire | 🌍 | $1,000/sec | $100,000 | Global chain printing money 24/7 |
+| VIP Table | 👑 | $18/sec | $1,500 | Exclusive high-stakes table |
+| High Roller | 💎 | $60/sec | $5,000 | Wealthy patron who tips big |
+| Casino Floor | 🏛️ | $280/sec | $20,000 | Entire floor generating revenue |
+| Casino Empire | 🌍 | $1,600/sec | $100,000 | Global chain printing money 24/7 |
+| Casino Chain | 🏢 | $10K/sec | $600,000 | A franchise in every major city |
+| Offshore Casino | 🚢 | $60K/sec | $4M | Beyond the reach of any commission |
+| Money Printer | 🖨️ | $400K/sec | $25M | Technically legal |
 
 **Synergy Bonuses:**
 - **Threshold Bonuses**: +10% at 10 owned, +15% at 25, +20% at 50, +25% at 100
@@ -181,6 +206,11 @@ EARN → UPGRADE → AUTOMATE → PRESTIGE → SPECIALIZE
 - **Slots Chance** - Increase slots win probability (up to 35%)
 - **Slots Payout** - Multiply slots winnings (up to 7x)
 - **Blackjack Payout** - Better blackjack payouts (up to 2x)
+- **Roulette Payout** - Better roulette payouts (up to 3.2x)
+- **Lucky 7s** - Bonus payout when the ball lands on 7/17/27
+- **Golden Pegs** - Multiplies every Plinko bucket (up to +0.5x)
+- **Magnet Bumpers** - Boosts Plinko edge buckets (up to +100%)
+- **Dealer Jinx** - Increases chance the dealer busts
 - **Income Boost** - Multiply all passive income (up to 2x)
 
 ### Prestige System
@@ -210,6 +240,7 @@ Choose your casino specialty for strategic bonuses:
 | Slot Mogul | 🎰 | +50% payout on Slots |
 | Card Shark | 🃏 | +50% payout on Blackjack |
 | Roulette Baron | 🎲 | +50% payout on Roulette |
+| Plinko Pro | 🎯 | +50% payout on Plinko drops |
 
 **Strategy**: Focus on one game type for maximum efficiency!
 
@@ -252,7 +283,7 @@ Unlock new mechanics as you progress:
 - **Milestones** unlock automatically - just keep playing!
 - **Synergies multiply** - 100 Tip Jars + 10 Casino Empires = massive boost!
 
-## 🖥️ Screenshots
+## 🖥️ Terminal Screenshot
 
 ```
 ╔══════════════════════════════════════════════════╗
@@ -354,8 +385,9 @@ Main Menu
 | Fully Upgraded | Max out all upgrades | +1% income |
 | First Prestige | Prestige for the first time | +1% income |
 | Prestige Master | Reach prestige level 5 | +1% income |
+| Plinko Jackpot | Land in a Plinko edge bucket | +1% income |
 
-**Total Possible**: 8 achievements = +8% permanent income bonus
+**Total Possible**: 9 achievements = +9% permanent income bonus
 
 ---
 
