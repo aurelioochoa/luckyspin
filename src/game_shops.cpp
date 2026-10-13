@@ -44,99 +44,80 @@
  * - Cost for next level
  * - Current and next values
  */
-void GamblingGame::displayUpgradeShop() {
-    bool inShop = true;
-    int shopSelection = 0;  // 0 = back, 1+ = upgrades
-    int maxSelection = upgrades.size();
-    
-    while (inShop) {
+void GamblingGame::displayUpgradeShop() { displayShop(false); }
+
+void GamblingGame::displayShop(bool generatorShop) {
+    const int count = generatorShop ? generators.size() : upgrades.size();
+    int selected = 1, mode = 0;
+    const int amounts[] = {1, 10, 25, 100, 0};
+    const string modes[] = {"x1", "x10", "x25", "x100", "MAX"};
+    string feedback;
+    while (true) {
         updatePassiveIncome();
-        
-        clearScreen();
-        printLine('=', 50, Color::BLUE);
-        cout << Color::BOLD << Color::BLUE;
-        printCentered("UPGRADE SHOP", 50);
-        cout << Color::RESET;
-        printLine('=', 50, Color::BLUE);
-        
-        cout << "\n  " << Color::WHITE << "Your Balance: " << Color::GREEN 
-             << formatMoney(money) << Color::RESET << "\n";
-        cout << "  " << Color::DIM << "Use W/S to navigate, Enter to buy, Q to exit" << Color::RESET << "\n\n";
-        
-        printLine('-', 50, Color::DIM);
-        
-        // List all upgrades with cursor
-        for (size_t i = 0; i < upgrades.size(); i++) {
-            Upgrade& upg = upgrades[i];
-            double cost = upg.getCurrentCost();
-            bool maxed = upg.isMaxed();
-            
-            // Highlight selected item
-            if ((int)i + 1 == shopSelection) {
-                cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-                cout << upg.getName() << Color::RESET;
-            } else {
-                cout << "    " << Color::WHITE << upg.getName() << Color::RESET;
+        autoSave();
+        cout << "\033[H";
+        displayHeader();
+        terminal::line(Color::YELLOW + Color::BOLD + (generatorShop ? "BUILD THE HOUSE / GENERATORS" : "STACK THE ODDS / UPGRADES"));
+        terminal::line("Balance " + formatMoney(money) + "  ·  Income +" + formatMoney(getTotalPassiveIncome()) + "/s");
+        terminal::line(generatorShop ? "Buy quantity " + modes[mode] + "  ·  E cycles quantity" : "Choose a game improvement for this run.");
+        terminal::rule();
+        const int visible = std::max(3, std::min(count + 1, terminal::rows() - 13));
+        const int first = std::max(0, std::min(selected - visible / 2, count + 1 - visible));
+        for (int row = first; row < first + visible; ++row) {
+            string label = "Back to the floor";
+            if (row > 0) {
+                if (generatorShop) {
+                    const Generator& g = generators[row - 1];
+                    label = g.getName() + "  ×" + to_string(g.getOwned());
+                } else {
+                    const Upgrade& u = upgrades[row - 1];
+                    label = u.getName() + "  Lv." + to_string(u.getCurrentLevel()) + "/" + to_string(u.getMaxLevel());
+                }
             }
-            
-            cout << " Lv." << upg.getCurrentLevel() << "/" << upg.getMaxLevel();
-            
-            if (maxed) {
-                cout << Color::YELLOW << " [MAX]" << Color::RESET << "\n";
-            } else {
-                string costColor = (money >= cost) ? Color::GREEN : Color::RED;
-                cout << "  " << costColor << formatMoney(cost) << Color::RESET << "\n";
-            }
-            
-            cout << "      " << Color::DIM << upg.getDescription();
-            cout << " (" << fixed << setprecision(1) << upg.getCurrentValue();
-            if (!maxed) {
-                cout << " -> " << Color::GREEN << upg.getNextValue() << Color::RESET << Color::DIM;
-            }
-            cout << ")" << Color::RESET << "\n";
+            const string style = row == selected ? Color::BG_GREEN + Color::BOLD + Color::WHITE : Color::WHITE;
+            terminal::line(style + string(row == selected ? "› " : "  ") + (row < 10 ? to_string(row) : " ") + "  " + label);
         }
-        
-        printLine('-', 50, Color::DIM);
-        
-        // Back option
-        if (shopSelection == 0) {
-            cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-            cout << "Back to Main Menu" << Color::RESET << "\n";
+        terminal::rule();
+        if (selected > 0) {
+            if (generatorShop) {
+                const Generator& g = generators[selected - 1];
+                const int amount = amounts[mode] == 0 ? getGeneratorMaxAffordable(g, money) : amounts[mode];
+                const double cost = getGeneratorBulkCost(g, std::max(1, amount));
+                terminal::line((money >= cost && amount > 0 ? Color::GREEN : Color::RED)
+                              + "Buy ×" + to_string(amount) + " for " + formatMoney(cost));
+                terminal::line(Color::DIM + g.getDescription());
+            } else {
+                const Upgrade& u = upgrades[selected - 1];
+                terminal::line(u.isMaxed() ? Color::YELLOW + "Fully upgraded" :
+                    (money >= u.getCurrentCost() ? Color::GREEN : Color::RED) + "Next level: " + formatMoney(u.getCurrentCost()));
+                terminal::line(Color::DIM + u.getDescription());
+            }
         } else {
-            cout << "    " << Color::WHITE << "Back to Main Menu" << Color::RESET << "\n";
+            terminal::line(Color::DIM + "Your casino keeps earning while you browse.");
+            terminal::line("");
         }
-        
-        char choice = getchWithTimeout(1000);
-        if (choice == 0) continue;
-        
-        // Handle arrow keys
-        if (choice == 27) {
-            char seq1 = getchWithTimeout(50);
-            if (seq1 == '[') {
-                char seq2 = getchWithTimeout(50);
-                if (seq2 == 'A') choice = 'w';
-                else if (seq2 == 'B') choice = 's';
-            }
-            if (choice == 27) continue;
-        }
-        
-        // Navigation
-        if (choice == 'w' || choice == 'W') {
-            shopSelection = (shopSelection - 1 + maxSelection + 1) % (maxSelection + 1);
-        } else if (choice == 's' || choice == 'S') {
-            shopSelection = (shopSelection + 1) % (maxSelection + 1);
-        } else if (choice == '\n' || choice == '\r' || choice == ' ' || choice == 'd' || choice == 'D') {
-            if (shopSelection == 0) {
-                inShop = false;
-            } else {
-                purchaseUpgrade(shopSelection - 1);
-            }
-        } else if (choice == 'q' || choice == 'Q' || choice == 'a' || choice == 'A') {
-            inShop = false;
-        } else if (choice >= '1' && choice <= '0' + (int)upgrades.size()) {
-            purchaseUpgrade(choice - '1');
-        } else if (choice == '0') {
-            inShop = false;
+        terminal::line(feedback.empty() ? Color::DIM + "↑/↓ W/S move · Enter buy · 1–9 buy" : Color::YELLOW + feedback);
+        terminal::line(Color::DIM + "Q / A / 0 back  ·  " + to_string(selected) + "/" + to_string(count));
+        terminal::finishScreen();
+        const char key = getMenuInput(1000);
+        if (!key) continue;
+        if (key == 'q' || key == 'Q' || key == 'a' || key == '0') return;
+        if (key == 'w') { selected = (selected + count) % (count + 1); feedback.clear(); continue; }
+        if (key == 's') { selected = (selected + 1) % (count + 1); feedback.clear(); continue; }
+        if ((key == 'e' || key == 'E') && generatorShop) { mode = (mode + 1) % 5; continue; }
+        if (key >= '1' && key <= '9' && key - '0' <= count) selected = key - '0';
+        else if (key != '\n' && key != '\r' && key != ' ' && key != 'd') continue;
+        if (selected == 0) return;
+        double cost = 0;
+        if (generatorShop) {
+            int bought = 0;
+            if (buyGeneratorCount(selected - 1, amounts[mode], cost, bought)) {
+                feedback = "Bought ×" + to_string(bought) + " · " + formatMoney(cost);
+                saveGame();
+            } else feedback = "Need " + formatMoney(cost) + " for this purchase.";
+        } else {
+            if (buyUpgradeLevel(selected - 1, cost)) { feedback = "Upgrade purchased · " + formatMoney(cost); saveGame(); }
+            else feedback = upgrades[selected - 1].isMaxed() ? "Already fully upgraded." : "Need " + formatMoney(cost) + ".";
         }
     }
 }
@@ -173,68 +154,30 @@ void GamblingGame::purchaseUpgrade(int index) {
  * displayPrestigeMenu() - Show prestige information and options
  */
 void GamblingGame::displayPrestigeMenu() {
-    clearScreen();
-    displayHeader();
-    cout << "\n";
-    printLine('=', 50, Color::MAGENTA);
-    printCentered("PRESTIGE", 50, Color::MAGENTA + Color::BOLD);
-    printLine('=', 50, Color::MAGENTA);
-    
-    cout << "\n  " << Color::WHITE << "Current Prestige Level: " << Color::YELLOW 
-         << prestigeLevel << Color::RESET << "\n";
-    cout << "  " << Color::WHITE << "Current Multiplier: " << Color::GREEN 
-         << fixed << setprecision(1) << prestigeMultiplier << "x" << Color::RESET << "\n";
-    
-    cout << "\n  " << Color::DIM << "Prestige resets your money, generators, and upgrades" << Color::RESET << "\n";
-    cout << "  " << Color::DIM << "but gives you a permanent +10% income multiplier!" << Color::RESET << "\n";
-    
-    double requirement = getPrestigeRequirement();
-    cout << "\n  " << Color::WHITE << "Lifetime Earnings: " << Color::CYAN 
-         << formatMoney(lifetimeEarnings) << Color::RESET << "\n";
-    cout << "  " << Color::WHITE << "Required to Prestige: " << Color::YELLOW 
-         << formatMoney(requirement) << Color::RESET << "\n";
-    
-    double progress = (lifetimeEarnings / requirement) * 100.0;
-    if (progress > 100.0) progress = 100.0;
-    
-    // Progress bar
-    cout << "\n  Progress: [";
-    int barWidth = 30;
-    int filled = (int)(progress / 100.0 * barWidth);
-    for (int i = 0; i < barWidth; i++) {
-        if (i < filled) {
-            cout << Color::GREEN << "█" << Color::RESET;
-        } else {
-            cout << Color::DIM << "░" << Color::RESET;
-        }
-    }
-    cout << "] " << fixed << setprecision(1) << progress << "%\n";
-    
-    if (canPrestige()) {
-        cout << "\n  " << Color::BG_GREEN << Color::WHITE << Color::BOLD
-             << " PRESTIGE AVAILABLE! " << Color::RESET << "\n";
-        cout << "\n  " << Color::WHITE << "After prestige you will have:" << Color::RESET << "\n";
-        cout << "    - Money: " << Color::CYAN << "$100.00" << Color::RESET << "\n";
-        cout << "    - Multiplier: " << Color::GREEN << fixed << setprecision(1)
-             << (prestigeMultiplier + 0.1) << "x" << Color::RESET << "\n";
-    } else {
-        cout << "\n  " << Color::DIM << "Keep earning to unlock prestige!" << Color::RESET << "\n";
-    }
-
-    cout << "  " << Color::CYAN << "[P]" << Color::RESET << " Prestige Now";
-    if (!canPrestige()) cout << Color::DIM << " (locked)";
-    cout << Color::RESET << "\n";
-    cout << "  " << Color::CYAN << "[S]" << Color::RESET << " Prestige Shop (" 
-         << Color::YELLOW << prestigeStars << " ★" << Color::RESET << ")\n";
-    cout << "  " << Color::CYAN << "[0]" << Color::RESET << " Back to Main Menu\n";
-    cout << "\n  Choice: ";
-    
-    char choice = getch();
-    
-    if ((choice == 'p' || choice == 'P') && canPrestige()) {
-        performPrestige();
-    } else if (choice == 's' || choice == 'S') {
-        displayPrestigeShop();
+    while (true) {
+        updatePassiveIncome(); autoSave();
+        cout << "\033[H"; displayHeader();
+        terminal::line(Color::YELLOW + Color::BOLD + "A FRESH START / PRESTIGE");
+        terminal::line("Level " + to_string(prestigeLevel) + " · Stars " + to_string(prestigeStars));
+        terminal::rule();
+        terminal::line("This run: " + formatMoney(lifetimeEarnings));
+        terminal::line("Target:   " + formatMoney(getPrestigeRequirement()));
+        const int length = std::max(10, std::min(40, tui::dashboardWidth(terminal::columns()) - 8));
+        const double progress = std::min(1.0, lifetimeEarnings / getPrestigeRequirement());
+        string bar;
+        for (int i = 0; i < length; ++i) bar += i < (int)(length * progress) ? "━" : "·";
+        terminal::line(Color::GREEN + bar + " " + to_string((int)(progress * 100)) + "%");
+        terminal::line(Color::DIM + "Reset this run for +10% income and stars.");
+        terminal::line(Color::DIM + "Achievements and perks carry forward.");
+        terminal::rule();
+        terminal::line((canPrestige() ? Color::GREEN : Color::DIM) + string("P  Prestige ") + (canPrestige() ? "available" : "locked"));
+        terminal::line(Color::YELLOW + "S  Spend stars on permanent perks");
+        terminal::line(Color::DIM + "Q / 0 back to the floor");
+        terminal::finishScreen();
+        const char key = getchWithTimeout(1000);
+        if ((key == 'p' || key == 'P') && canPrestige()) performPrestige();
+        else if (key == 's' || key == 'S') displayPrestigeShop();
+        else if (key == 'q' || key == 'Q' || key == '0') return;
     }
 }
 
@@ -242,130 +185,37 @@ void GamblingGame::displayPrestigeMenu() {
  * displayPrestigeShop() - Show prestige shop with permanent perks (Phase B)
  */
 void GamblingGame::displayPrestigeShop() {
-    bool inShop = true;
-    int shopSelection = 0;
-    const int PERK_COUNT = 4;
-    
-    // Perk definitions: name, description, max level, cost per level
-    struct PerkInfo {
-        string name;
-        string desc;
-        int maxLevel;
-        int baseCost;
-        int* currentLevel;
-    };
-    
-    PerkInfo perks[PERK_COUNT] = {
-        {"Starting Money", "Start with more money after prestige", 10, 3, &perkStartingMoney},
-        {"Generator Discount", "All generators cost less", 10, 5, &perkGeneratorDiscount},
-        {"Offline Cap", "Increase offline earnings cap", 5, 8, &perkOfflineCap},
-        {"Passive Boost", "Permanent +5% passive income per level", 20, 4, &perkPassiveBoost}
-    };
-    
-    while (inShop) {
-        clearScreen();
-        printLine('=', 50, Color::YELLOW);
-        cout << Color::BOLD << Color::YELLOW;
-        printCentered("PRESTIGE SHOP", 50);
-        cout << Color::RESET;
-        printLine('=', 50, Color::YELLOW);
-        
-        cout << "\n  " << Color::WHITE << "Prestige Stars: " << Color::YELLOW 
-             << prestigeStars << " ★" << Color::RESET << "\n";
-        cout << "  " << Color::DIM << "Use W/S to navigate, Enter to buy, Q to exit" 
-             << Color::RESET << "\n\n";
-        
-        printLine('-', 50, Color::DIM);
-        
-        // Display perks
-        for (int i = 0; i < PERK_COUNT; i++) {
-            PerkInfo& perk = perks[i];
-            int level = *(perk.currentLevel);
-            bool maxed = (level >= perk.maxLevel);
-            int cost = perk.baseCost + (level * 2);  // Cost increases with level
-            bool canAfford = (prestigeStars >= cost) && !maxed;
-            
-            // Highlight selected item
-            if (i == shopSelection) {
-                cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-                cout << perk.name << Color::RESET;
-            } else {
-                cout << "    " << Color::WHITE << perk.name << Color::RESET;
-            }
-            
-            cout << " [" << Color::CYAN << level << "/" << perk.maxLevel << Color::RESET << "]";
-            
-            if (maxed) {
-                cout << " " << Color::GREEN << "MAX" << Color::RESET;
-            } else {
-                string costColor = canAfford ? Color::GREEN : Color::RED;
-                cout << " - Cost: " << costColor << cost << " ★" << Color::RESET;
-            }
-            cout << "\n";
-            
-            cout << "      " << Color::DIM << perk.desc << Color::RESET << "\n";
-            
-            // Show current effect
-            if (level > 0) {
-                cout << "      " << Color::GREEN << "Current: ";
-                if (i == 0) cout << "+$" << (level * 50);
-                else if (i == 1) cout << "-" << (level * 5) << "% cost";
-                else if (i == 2) cout << "+" << (level * 2) << "h cap";
-                else if (i == 3) cout << "+" << (level * 5) << "% income";
-                cout << Color::RESET << "\n";
-            }
+    const string names[] = {"Starting Money", "Generator Discount", "Offline Cap", "Passive Boost"};
+    const string descriptions[] = {"+$50 starting money per level", "5% cheaper generators per level", "+2h offline earnings cap per level", "+5% passive income per level"};
+    const int maximum[] = {10, 10, 5, 20}, base[] = {3, 5, 8, 4};
+    int selected = 0;
+    string feedback;
+    while (true) {
+        updatePassiveIncome(); autoSave();
+        cout << "\033[H"; displayHeader();
+        terminal::line(Color::YELLOW + Color::BOLD + "PERMANENT PERKS");
+        terminal::line("Available stars: " + to_string(prestigeStars) + " ★");
+        terminal::rule();
+        for (int i = 0; i < 4; ++i) {
+            const int level = getPerkLevel(i);
+            const string style = i == selected ? Color::BG_GREEN + Color::WHITE + Color::BOLD : Color::WHITE;
+            terminal::line(style + string(i == selected ? "› " : "  ") + names[i] + " " + to_string(level) + "/" + to_string(maximum[i]));
         }
-        
-        printLine('-', 50, Color::DIM);
-        
-        // Back option
-        if (shopSelection == PERK_COUNT) {
-            cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-            cout << "Back to Prestige Menu" << Color::RESET << "\n";
-        } else {
-            cout << "    " << Color::WHITE << "Back to Prestige Menu" << Color::RESET << "\n";
-        }
-        
-        char choice = getch();
-        
-        // Handle arrow keys
-        if (choice == 27) {
-            char seq1 = getchWithTimeout(50);
-            if (seq1 == '[') {
-                char seq2 = getchWithTimeout(50);
-                if (seq2 == 'A') choice = 'w';
-                else if (seq2 == 'B') choice = 's';
-            }
-            if (choice == 27) continue;
-        }
-        
-        // Navigation
-        if (choice == 'w' || choice == 'W') {
-            shopSelection = (shopSelection - 1 + PERK_COUNT + 1) % (PERK_COUNT + 1);
-        } else if (choice == 's' || choice == 'S') {
-            shopSelection = (shopSelection + 1) % (PERK_COUNT + 1);
-        } else if (choice == '\n' || choice == '\r' || choice == ' ' || choice == 'd' || choice == 'D') {
-            if (shopSelection == PERK_COUNT) {
-                inShop = false;
-            } else {
-                // Purchase through the shared headless action, then report.
-                PerkInfo& perk = perks[shopSelection];
-                int cost = 0;
-                if (buyPerkLevel(shopSelection, cost)) {
-                    cout << "\n  " << Color::GREEN << UI::CHECK << " Purchased "
-                         << perk.name << " (Level " << (*(perk.currentLevel)) << ")!" << Color::RESET;
-                    usleep(800000);
-                } else if (*(perk.currentLevel) >= perk.maxLevel) {
-                    cout << "\n  " << Color::YELLOW << "Already at max level!" << Color::RESET;
-                    usleep(800000);
-                } else {
-                    cout << "\n  " << Color::RED << UI::CROSS_X << " Not enough stars! Need "
-                         << cost << "\xE2\x98\x85" << Color::RESET;
-                    usleep(800000);
-                }
-            }
-        } else if (choice == 'q' || choice == 'Q' || choice == 'a' || choice == 'A') {
-            inShop = false;
+        terminal::rule();
+        const int level = getPerkLevel(selected);
+        terminal::line(level == maximum[selected] ? Color::YELLOW + "Fully upgraded" : "Next level: " + to_string(base[selected] + level * 2) + " ★");
+        terminal::line(Color::DIM + descriptions[selected]);
+        terminal::line(Color::YELLOW + feedback);
+        terminal::line(Color::DIM + "↑/↓ W/S move · Enter buy · Q back");
+        terminal::finishScreen();
+        const char key = getMenuInput(1000);
+        if (key == 'q' || key == 'Q' || key == 'a') return;
+        if (key == 'w') { selected = (selected + 3) % 4; continue; }
+        if (key == 's') { selected = (selected + 1) % 4; continue; }
+        if (key == '\n' || key == '\r' || key == ' ' || key == 'd') {
+            int cost = 0;
+            if (buyPerkLevel(selected, cost)) { feedback = "Perk purchased · " + to_string(cost) + " ★"; saveGame(); }
+            else feedback = level == maximum[selected] ? "Already fully upgraded." : "You need more stars.";
         }
     }
 }
@@ -374,62 +224,32 @@ void GamblingGame::displayPrestigeShop() {
  * displaySpecializationMenu() - Choose a specialization build (Phase C)
  */
 void GamblingGame::displaySpecializationMenu() {
-    clearScreen();
-    printLine('=', 50, Color::CYAN);
-    cout << Color::BOLD << Color::CYAN;
-    printCentered("SPECIALIZATION", 50);
-    cout << Color::RESET;
-    printLine('=', 50, Color::CYAN);
-    
-    cout << "\n  " << Color::WHITE << "Choose your casino specialty for bonus payouts!" << Color::RESET << "\n";
-    cout << "  " << Color::DIM << "You can change this anytime, but bonuses only apply to your specialty." << Color::RESET << "\n\n";
-    
-    const char* specNames[] = {"None", "Wheel Tycoon", "Slot Mogul", "Card Shark", "Roulette Baron", "Plinko Pro"};
-    const char* specDesc[] = {
-        "No specialization bonus",
-        "+50% payout on Wheel spins",
-        "+50% payout on Slots",
-        "+50% payout on Blackjack",
-        "+50% payout on Roulette",
-        "+50% payout on Plinko drops"
-    };
-    const int SPEC_COUNT = 5;
-    const char* specIcons[SPEC_COUNT + 1] = {
-        "", "\xF0\x9F\x8E\xA1", "\xF0\x9F\x8E\xB0", "\xF0\x9F\x83\x8F", "\xF0\x9F\x8E\xB2", "\xF0\x9F\x8E\xAF"
-    };
-
-    for (int i = 0; i <= SPEC_COUNT; i++) {
-        if (i == specializationId) {
-            cout << "  " << Color::BG_GREEN << Color::WHITE << Color::BOLD << " ✓ ";
-        } else {
-            cout << "    ";
+    const string names[] = {"All-rounder", "Wheel Tycoon", "Slot Mogul", "Card Shark", "Roulette Baron", "Plinko Pro"};
+    int selected = specializationId;
+    while (true) {
+        updatePassiveIncome(); autoSave();
+        cout << "\033[H";
+        displayHeader();
+        terminal::line(Color::YELLOW + Color::BOLD + "CHOOSE YOUR SPECIALTY");
+        terminal::line(Color::DIM + "+50% return at your chosen table.");
+        terminal::rule();
+        for (int i = 0; i < 6; ++i) {
+            const string style = i == selected ? Color::BG_GREEN + Color::BOLD + Color::WHITE : Color::WHITE;
+            terminal::line(style + string(i == selected ? "› " : "  ") + to_string(i) + "  " + names[i]
+                          + (i == specializationId ? "  ✓" : ""));
         }
-        
-        cout << Color::CYAN << "[" << i << "]" << Color::RESET << " ";
-        if (i > 0) cout << specIcons[i] << " ";
-        cout << Color::WHITE << specNames[i] << Color::RESET;
-        
-        if (i == specializationId) {
-            cout << Color::BG_GREEN << " " << Color::RESET;
-        }
-        cout << "\n";
-        
-        cout << "      " << Color::DIM << specDesc[i] << Color::RESET << "\n\n";
-    }
-    
-    cout << "  " << Color::CYAN << "[Q]" << Color::RESET << " Back to Main Menu\n";
-    cout << "\n  Choice: ";
-    
-    char choice = getch();
-    
-    if (choice >= '0' && choice <= '0' + SPEC_COUNT) {
-        int newSpec = choice - '0';
-        if (newSpec != specializationId) {
-            setSpecializationId(newSpec);
-            cout << "\n  " << Color::GREEN << UI::CHECK << " Specialization changed to: "
-                 << specNames[newSpec] << Color::RESET;
-            usleep(1000000);
-        }
+        terminal::rule();
+        terminal::line(Color::DIM + "Free to change · All-rounder has no bonus.");
+        terminal::line(Color::DIM + "↑/↓ move · Enter choose · 0–5 choose · Q back");
+        terminal::finishScreen();
+        const char key = getMenuInput(1000);
+        if (!key) continue;
+        if (key == 'q' || key == 'Q' || key == 'a') return;
+        if (key == 'w') { selected = (selected + 5) % 6; continue; }
+        if (key == 's') { selected = (selected + 1) % 6; continue; }
+        if (key >= '0' && key <= '5') selected = key - '0';
+        else if (key != '\n' && key != '\r' && key != ' ' && key != 'd') continue;
+        setSpecializationId(selected); saveGame(); return;
     }
 }
 
@@ -484,139 +304,7 @@ void GamblingGame::performPrestige() {
  * - Cost to buy the next one
  * - Income per second each one provides
  */
-void GamblingGame::displayGeneratorShop() {
-    bool inShop = true;
-    int shopSelection = 0;  // 0 = back, 1-8 = generators
-    int maxSelection = generators.size();  // 0 to maxSelection
-
-    int buyMode = 0;
-    static const int BUY_MODE_COUNT = 5;
-    const int buyAmounts[BUY_MODE_COUNT] = {1, 10, 25, 100, 0};
-    const string buyModeNames[BUY_MODE_COUNT] = {"x1", "x10", "x25", "x100", "MAX"};
-     
-    while (inShop) {
-        // Update passive income while in shop
-        updatePassiveIncome();
-        
-        clearScreen();
-        printLine('=', 50, Color::MAGENTA);
-        cout << Color::BOLD << Color::MAGENTA;
-        printCentered("GENERATOR SHOP", 50);
-        cout << Color::RESET;
-        printLine('=', 50, Color::MAGENTA);
-        
-        // Show current balance and income
-        cout << "\n  " << Color::WHITE << "Your Balance: " << Color::GREEN 
-             << formatMoney(money) << Color::RESET << "\n";
-        cout << "  " << Color::WHITE << "Current Income: " << Color::GREEN 
-             << "+$" << fixed << setprecision(2) << getTotalPassiveIncome() 
-             << "/sec" << Color::RESET << "\n";
-        cout << "  " << Color::WHITE << "Buy Mode: " << Color::CYAN 
-             << buyModeNames[buyMode] << Color::RESET << "  " << Color::DIM
-             << "(press E to change)" << Color::RESET << "\n";
-        cout << "  " << Color::DIM << "Use W/S to navigate, Enter to buy, E to change quantity, Q to exit" 
-             << Color::RESET << "\n\n";
-         
-        printLine('-', 50, Color::DIM);
-         
-        // List all generators with cursor
-        for (size_t i = 0; i < generators.size(); i++) {
-            Generator& gen = generators[i];
-
-            int buyAmount = buyAmounts[buyMode];
-            int amountToBuy = buyAmount;
-            double cost = 0.0;
-
-            if (buyAmount == 0) {
-                amountToBuy = getGeneratorMaxAffordable(gen, money);
-                if (amountToBuy > 0) {
-                    cost = getGeneratorBulkCost(gen, amountToBuy);
-                } else {
-                    cost = gen.getCurrentCost();
-                }
-            } else {
-                cost = getGeneratorBulkCost(gen, buyAmount);
-            }
-
-            bool canAfford = (buyAmount == 0) ? (amountToBuy > 0 && money >= cost) : (money >= cost);
-            string costColor = canAfford ? Color::GREEN : Color::RED;
-
-            double perUnitIncome = gen.getBaseIncome() * getIncomeMultiplier() * prestigeMultiplier;
-            double gainPerSec = perUnitIncome * ((buyAmount == 0) ? amountToBuy : buyAmount);
-
-            string buyLabel;
-            if (buyAmount == 0) {
-                buyLabel = "MAX x" + to_string(amountToBuy);
-            } else {
-                buyLabel = "x" + to_string(buyAmount);
-            }
-             
-            // Highlight selected item
-            if ((int)i + 1 == shopSelection) {
-                cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-                cout << gen.getIcon() << " " << gen.getName() << Color::RESET;
-            } else {
-                cout << "    " << gen.getIcon() << " " << Color::WHITE << gen.getName() << Color::RESET;
-            }
-            
-            cout << " x" << gen.getOwned();
-            cout << " " << Color::GREEN << "(+$" << fixed << setprecision(1) 
-                 << gen.getBaseIncome() << "/s)" << Color::RESET << "\n";
-             
-            cout << "      " << Color::DIM << gen.getDescription() << Color::RESET << "\n";
-            cout << "      Buy: " << Color::CYAN << buyLabel << Color::RESET;
-            cout << "  Cost: " << costColor << formatMoney(cost) << Color::RESET;
-            cout << "  Gain: " << Color::GREEN << "+" << formatMoney(gainPerSec) << "/sec" << Color::RESET << "\n";
-        }
-        
-        printLine('-', 50, Color::DIM);
-        
-        // Back option
-        if (shopSelection == 0) {
-            cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " ";
-            cout << "Back to Main Menu" << Color::RESET << "\n";
-        } else {
-            cout << "    " << Color::WHITE << "Back to Main Menu" << Color::RESET << "\n";
-        }
-        
-        // Get user input with timeout for real-time updates
-        char choice = getchWithTimeout(1000);
-        
-        if (choice == 0) continue;  // Timeout, refresh
-        
-        // Handle arrow keys
-        if (choice == 27) {
-            char seq1 = getchWithTimeout(50);
-            if (seq1 == '[') {
-                char seq2 = getchWithTimeout(50);
-                if (seq2 == 'A') choice = 'w';
-                else if (seq2 == 'B') choice = 's';
-            }
-            if (choice == 27) continue;
-        }
-        
-        // Navigation
-        if (choice == 'w' || choice == 'W') {
-            shopSelection = (shopSelection - 1 + maxSelection + 1) % (maxSelection + 1);
-        } else if (choice == 's' || choice == 'S') {
-            shopSelection = (shopSelection + 1) % (maxSelection + 1);
-        } else if (choice == 'e' || choice == 'E') {
-            buyMode = (buyMode + 1) % BUY_MODE_COUNT;
-        } else if (choice == '\n' || choice == '\r' || choice == ' ' || choice == 'd' || choice == 'D') {
-            if (shopSelection == 0) {
-                inShop = false;
-            } else {
-                purchaseGenerator(shopSelection - 1, buyAmounts[buyMode]);
-            }
-        } else if (choice == 'q' || choice == 'Q' || choice == 'a' || choice == 'A') {
-            inShop = false;
-        } else if (choice >= '1' && choice <= '0' + (int)generators.size()) {
-            purchaseGenerator(choice - '1', buyAmounts[buyMode]);
-        } else if (choice == '0') {
-            inShop = false;
-        }
-    }
-}
+void GamblingGame::displayGeneratorShop() { displayShop(true); }
 
 /*
  * purchaseGenerator() - Attempt to buy a generator

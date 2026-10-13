@@ -72,7 +72,7 @@ All wager rounds route through shared headless actions, so both frontends settle
 | Prestige Stars | Earned on prestige; spent on four permanent perk lines |
 | Achievements | 9 achievements, each worth +1% permanent income |
 | Milestones | Six thresholds unlocking mechanics (e.g. banking) |
-| Specialization | Pick one of six casino specialties: +50% payout there |
+| Specialization | Pick one of five game specialties: +50% payout there; all-rounder has no bonus |
 | Synergies | Ownership thresholds (10/25/50/100) plus higher-tier boosts |
 | Interest | Post-first-prestige passive % on your bankroll |
 | Random Events | Happy Hour (2x income), Hot Streak (1.5x payouts), Money Rain (instant cash) |
@@ -133,7 +133,7 @@ Passive Boost perk.
 ```
 Requirement(next) = $100,000 * 2 ^ prestigeLevel
 Stars earned      = 5 + prestigeLevel + floor(totalLifetime / $1M)
-Income bonus      = +10% per prestige level (multiplicative stack)
+Income multiplier = 1.0 + 0.1 * prestigeLevel
 ```
 
 ### 4.5 Random Events
@@ -152,47 +152,41 @@ Fired by the income tick every 180–480 seconds of play:
 
 ### 5.1 Terminal Main Screen
 
-```
-╔══════════════════════════════════════════════════╗
-║     🎰 LUCKY SPIN CASINO 🎰                      ║
-║     ★ ★ ☆ ☆ ☆ ☆ ☆ ☆ ☆ ☆                         ║
-╠══════════════════════════════════════════════════╣
-║  💰 Balance: $1,234.56  🔥 Income: +$12.50/sec   ║
-║  ...stats row...                                 ║
-╚══════════════════════════════════════════════════╝
+The dashboard uses a restrained green and brass palette with compact bankroll,
+income, prestige, and run statistics. At 76+ terminal columns and 23+ rows, the
+main menu splits into two columns. Smaller windows show a scrolling list that
+keeps the selection visible. UTF-8 and ANSI-aware clipping prevents dashboard
+rows from wrapping.
 
-  GAMES
-  ▶ 🎡 Spin the Wheel    (50% chance, 2.0x)
-    🎰 Play Slots        (17% chance, 5.0x)
-    🃏 Blackjack         (payout: 2.0x)
-    🎲 Roulette          (up to 35x payout)
-    🎯 Plinko            (risk levels, 35x edge)
-
-  SHOP
-    🏪 Generator Shop    (passive income)
-    ⬆ Upgrade Shop       (improve odds)
-
-  OPTIONS
-    💵 Change Bet ...
-```
-
-WASD/arrow navigation with Enter to select; digits jump to entries; Q quits.
-Games animate inline (wheel dots, slowing reels, card deals, Plinko ball path).
+Arrow/W/S navigation, Enter/Space/D selection, numbered shortcuts, V save,
+Q quit, and paged `?` help are visible in the main menu. Generator and upgrade
+shops show the selected item's price and description, with E cycling generator
+quantity. Bets, specialties, prestige, perk shopping, and achievements use
+compact screens. The terminal runs in an alternate screen and restores its
+settings and cursor on exit; `NO_COLOR` disables styling.
 
 ### 5.2 Web GUI
 
 Single-page app embedded in the binary (`web/index.html`, served at `/`):
 
-- **Header**: live balance, passive income, prestige badge, event banner
-- **Games tab**: animated wheel, slot reels, roulette board with history,
-  canvas Plinko that replays the server's exact ball path, blackjack table
-  with hole-card hiding
-- **Generators / Upgrades tabs**: live pricing for all bulk-buy modes
-- **Prestige tab**: progress bar, star balance, perk shop
-- **Awards tab**: achievements grid and run statistics
+- **Header and hero**: live balance, passive income, prestige, event status,
+  and generated felt-table artwork embedded at `/assets/casino.png`.
+- **The floor**: one selected table, rule summary, gross/net result feedback,
+  animated wheel and reels, roulette history, Plinko's server-defined ball path,
+  and blackjack with a concealed hole card.
+- **Income**: eleven generators with all bulk-buy modes and affordability.
+- **Upgrades**: improvements plus the specialty chooser.
+- **Prestige**: progress measured against current-run earnings, star balance,
+  and permanent perks.
+- **Collection**: achievements and run statistics, plus confirmed full reset.
+- **About & help**: first steps, save behavior, keyboard shortcuts, and source.
 
-Polls `/api/state` once per second; actions POST to `/api/action`. The page
-is vanilla HTML/CSS/JS with zero external dependencies.
+The UI prevents overlapping action requests, preserves bet edits during polling,
+shows connection failures and retries, restores keyboard focus on shop updates,
+and respects reduced-motion preferences. Number keys 1–5 select tables.
+
+Polls `/api/state` once per second; actions POST to `/api/action`. The page uses
+vanilla HTML/CSS/JS with zero runtime dependencies or remote assets.
 
 ---
 

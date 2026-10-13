@@ -16,8 +16,10 @@
 #include <cstdlib>
 #include <csignal>
 #include <cerrno>
+#include <sys/ioctl.h>
 #include "colors.h"
 #include "core/text_width.h"
+#include "core/terminal_ui.h"
 
 /*
  * ============================================================================
@@ -33,6 +35,30 @@
  * for it to be restored on normal exit and on fatal signals.
  */
 namespace terminal {
+
+inline int columns() {
+    struct winsize size = {};
+    return ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col
+        ? size.ws_col : 80;
+}
+
+inline int rows() {
+    struct winsize size = {};
+    return ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_row
+        ? size.ws_row : 24;
+}
+
+inline void line(const std::string& content) {
+    std::cout << "  " << tui::fit(content, tui::dashboardWidth(columns())) << Color::RESET << "\n";
+}
+
+inline void rule() {
+    std::string bar;
+    for (int i = 0; i < tui::dashboardWidth(columns()); ++i) bar += "─";
+    line(Color::DIM + bar);
+}
+
+inline void finishScreen() { std::cout << "\033[J" << std::flush; }
 
 inline struct termios& savedState() {
     static struct termios state;
@@ -50,7 +76,8 @@ inline void restore() {
     if (haveSavedState()) {
         tcsetattr(STDIN_FILENO, TCSANOW, &savedState());
     }
-    static const char showCursor[] = "\033[?25h";
+    if (!isatty(STDOUT_FILENO)) return;
+    static const char showCursor[] = "\033[0m\033[?25h\033[?1049l";
     ssize_t ignored = write(STDOUT_FILENO, showCursor, sizeof(showCursor) - 1);
     (void)ignored;
 }
@@ -71,6 +98,7 @@ inline void init() {
     signal(SIGTERM, onFatalSignal);
     signal(SIGQUIT, onFatalSignal);
     signal(SIGHUP,  onFatalSignal);
+    if (isatty(STDOUT_FILENO)) std::cout << "\033[?1049h\033[?25l";
 }
 
 } // namespace terminal

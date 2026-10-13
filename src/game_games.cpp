@@ -40,139 +40,46 @@
  * 2. Less than or equal to current balance (can't bet more than you have)
  */
 void GamblingGame::changeBet() {
-    int betSelection = 0;
-    bool inBetMenu = true;
-    
-    // Preset bet amounts
-    double presets[] = {1, 5, 10, 25, 50, 100, 250, 500, 1000};
-    int presetCount = 9;
-    int totalOptions = presetCount + 2;  // presets + custom + back
-    
-    while (inBetMenu) {
-        clearScreen();
-        displayHeader();
-        
-        cout << "\n";
-        printLine('-', 50, Color::YELLOW);
-        printCentered("\xF0\x9F\x92\xB5 CHANGE BET \xF0\x9F\x92\xB5", 50, Color::YELLOW + Color::BOLD);
-        printLine('-', 50, Color::YELLOW);
-        
-        cout << "\n  " << Color::WHITE << "Current bet: " << Color::CYAN 
-             << "$" << fixed << setprecision(2) << betAmount << Color::RESET << "\n";
-        cout << "  " << Color::WHITE << "Available balance: " << Color::GREEN << "$" << fixed 
-             << setprecision(2) << money << Color::RESET << "\n";
-        
-        cout << "\n  " << Color::DIM << "Use W/S to navigate, Enter to select, Q to exit" << Color::RESET << "\n\n";
-        
-        // Display preset bet options
-        for (int i = 0; i < presetCount; i++) {
-            bool canAfford = (presets[i] <= money);
-            bool isSelected = (betSelection == i);
-            bool isCurrent = (presets[i] == betAmount);
-            
-            if (isSelected) {
-                cout << "  " << Color::BG_BLUE << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " $" << fixed << setprecision(0) << presets[i] << Color::RESET;
-            } else {
-                cout << "    ";
-                if (canAfford) {
-                    cout << Color::WHITE << "$" << fixed << setprecision(0) << presets[i] << Color::RESET;
-                } else {
-                    cout << Color::RED << "$" << fixed << setprecision(0) << presets[i] << Color::RESET;
-                }
-            }
-            
-            if (isCurrent) {
-                cout << " " << Color::CYAN << "(current)" << Color::RESET;
-            }
-            if (!canAfford) {
-                cout << " " << Color::DIM << "(insufficient funds)" << Color::RESET;
-            }
-            cout << "\n";
+    const double presets[] = {1, 5, 10, 25, 50, 100, 250, 500, 1000};
+    int selected = 2;
+    string feedback;
+    while (true) {
+        updatePassiveIncome(); autoSave();
+        cout << "\033[H"; displayHeader();
+        terminal::line(Color::YELLOW + Color::BOLD + "SET YOUR STAKE");
+        terminal::line("Bet " + formatMoney(betAmount) + "  ·  Balance " + formatMoney(money));
+        terminal::rule();
+        const int visible = std::max(3, std::min(11, terminal::rows() - 10));
+        const int first = std::max(0, std::min(selected - visible / 2, 11 - visible));
+        for (int i = first; i < first + visible; ++i) {
+            string label = i < 9 ? formatMoney(presets[i]) : i == 9 ? "Custom amount" : "Back to the floor";
+            if (i < 9 && presets[i] > money) label += "  / funds short";
+            if (i < 9 && presets[i] == betAmount) label += "  ✓ current";
+            const string style = i == selected ? Color::BG_GREEN + Color::WHITE + Color::BOLD : Color::WHITE;
+            terminal::line(style + string(i == selected ? "› " : "  ") + label);
         }
-        
-        cout << "\n";
-        
-        // Custom amount option
-        if (betSelection == presetCount) {
-            cout << "  " << Color::BG_YELLOW << Color::BLACK << Color::BOLD << " " << UI::ARROW_RIGHT << " Custom Amount" << Color::RESET << "\n";
-        } else {
-            cout << "    " << Color::YELLOW << "Custom Amount" << Color::RESET << "\n";
+        terminal::rule();
+        terminal::line(feedback.empty() ? Color::DIM + "All tables use your chosen bet." : Color::RED + feedback);
+        terminal::line(Color::DIM + "↑/↓ W/S move · Enter choose · Q back");
+        terminal::finishScreen();
+        const char key = getMenuInput(1000);
+        if (!key) continue;
+        if (key == 'q' || key == 'Q' || key == 'a') return;
+        if (key == 'w') { selected = (selected + 10) % 11; continue; }
+        if (key == 's') { selected = (selected + 1) % 11; continue; }
+        if (key != '\n' && key != '\r' && key != ' ' && key != 'd') continue;
+        if (selected == 10) return;
+        double amount = selected < 9 ? presets[selected] : 0;
+        if (selected == 9) {
+            cout << "\n  Enter amount (blank cancels): $" << "\033[?25h" << flush;
+            string input;
+            std::getline(cin, input);
+            cout << "\033[?25l";
+            if (input.empty()) continue;
+            if (!parseDouble(input, amount)) { feedback = "Enter a valid numeric amount."; continue; }
         }
-        
-        // Back option
-        if (betSelection == presetCount + 1) {
-            cout << "  " << Color::BG_RED << Color::WHITE << Color::BOLD << " " << UI::ARROW_RIGHT << " Back to Menu" << Color::RESET << "\n";
-        } else {
-            cout << "    " << Color::DIM << "Back to Menu" << Color::RESET << "\n";
-        }
-        
-        char choice = getch();
-        
-        // Handle arrow keys
-        if (choice == 27) {
-            char seq1 = getchWithTimeout(50);
-            if (seq1 == '[') {
-                char seq2 = getchWithTimeout(50);
-                if (seq2 == 'A') choice = 'w';
-                else if (seq2 == 'B') choice = 's';
-            }
-            if (choice == 27) continue;
-        }
-        
-        // Navigation
-        if (choice == 'w' || choice == 'W') {
-            betSelection = (betSelection - 1 + totalOptions) % totalOptions;
-        } else if (choice == 's' || choice == 'S') {
-            betSelection = (betSelection + 1) % totalOptions;
-        } else if (choice == '\n' || choice == '\r' || choice == ' ' || choice == 'd' || choice == 'D') {
-            if (betSelection == presetCount + 1) {
-                // Back to menu
-                inBetMenu = false;
-            } else if (betSelection == presetCount) {
-                // Custom amount
-                cout << "\n  Enter custom bet amount: " << Color::YELLOW << "$" << Color::RESET;
-                double newBet;
-                cin >> newBet;
-                
-                if (newBet > 0 && newBet <= money) {
-                    betAmount = newBet;
-                    cout << "\n  " << Color::GREEN << UI::CHECK << " Bet updated to $" << fixed 
-                         << setprecision(2) << betAmount << "!" << Color::RESET << "\n";
-                    cout << "\n  Press any key to continue...";
-                    getch();
-                    inBetMenu = false;
-                } else if (newBet <= 0) {
-                    cout << "\n  " << Color::RED << UI::CROSS_X << " Bet must be greater than $0!" 
-                         << Color::RESET << "\n";
-                    cout << "\n  Press any key to continue...";
-                    getch();
-                } else {
-                    cout << "\n  " << Color::RED << UI::CROSS_X << " Insufficient funds for that bet!" 
-                         << Color::RESET << "\n";
-                    cout << "\n  Press any key to continue...";
-                    getch();
-                }
-            } else {
-                // Preset amount
-                double selectedBet = presets[betSelection];
-                if (selectedBet <= money) {
-                    betAmount = selectedBet;
-                    cout << "\n  " << Color::GREEN << UI::CHECK << " Bet updated to $" << fixed 
-                         << setprecision(2) << betAmount << "!" << Color::RESET << "\n";
-                    cout << "\n  Press any key to continue...";
-                    getch();
-                    inBetMenu = false;
-                } else {
-                    cout << "\n  " << Color::RED << UI::CROSS_X << " Insufficient funds for that bet!" 
-                         << Color::RESET << "\n";
-                    cout << "\n  Press any key to continue...";
-                    getch();
-                }
-            }
-        } else if (choice == 'q' || choice == 'Q') {
-            // Quick exit
-            inBetMenu = false;
-        }
+        if (setBetAmount(amount)) { saveGame(); return; }
+        feedback = "Use a positive bet within your balance.";
     }
 }
 
@@ -184,6 +91,7 @@ void GamblingGame::changeBet() {
  */
 void GamblingGame::spinWheel() {
     if (!canAffordBet()) return;
+    clearScreen(); displayHeader();
 
     double winChance = getUpgradeValue(UpgradeType::WHEEL_CHANCE);
     double payoutMult = getUpgradeValue(UpgradeType::WHEEL_PAYOUT);
@@ -251,6 +159,7 @@ string GamblingGame::getColoredSymbol(int index) {
  */
 void GamblingGame::playSlots() {
     if (!canAffordBet()) return;
+    clearScreen(); displayHeader();
 
     double winChance = getUpgradeValue(UpgradeType::SLOTS_CHANCE);
     double payoutMult = getUpgradeValue(UpgradeType::SLOTS_PAYOUT);

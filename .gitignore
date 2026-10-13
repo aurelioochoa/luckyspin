@@ -20,3 +20,9 @@ gambling_game_asan
 
 # Generated at build time from web/index.html
 src/web_assets.h
+
+src/art_assets.h
+gambling_game_debug
+tests/run_tests_asan
+node_modules/
+.unlazy/

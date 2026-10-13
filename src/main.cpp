@@ -15,6 +15,7 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <cerrno>
 #include <unistd.h>
 
 #include "gambling_game.h"
@@ -27,7 +28,17 @@ namespace {
 int portFlag = 8787;
 bool openBrowser = true;
 
-bool parseFlags(int argc, char** argv, bool& guiMode) {
+bool validPort(const std::string& value) {
+    if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos) return false;
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol(value.c_str(), &end, 10);
+    if (errno || *end || parsed < 1 || parsed > 65535) return false;
+    portFlag = (int)parsed;
+    return true;
+}
+
+int parseFlags(int argc, char** argv, bool& guiMode) {
     for (int i = 1; i < argc; i++) {
         const std::string arg = argv[i];
         if (arg == "--gui") {
@@ -35,18 +46,24 @@ bool parseFlags(int argc, char** argv, bool& guiMode) {
         } else if (arg == "--no-open") {
             openBrowser = false;
         } else if (arg == "--port" && i + 1 < argc) {
-            portFlag = std::atoi(argv[++i]);
+            if (!validPort(argv[++i])) {
+                std::cerr << "Port must be an integer from 1 to 65535.\n";
+                return 2;
+            }
         } else if (arg.rfind("--port=", 0) == 0) {
-            portFlag = std::atoi(arg.c_str() + 7);
+            if (!validPort(arg.substr(7))) {
+                std::cerr << "Port must be an integer from 1 to 65535.\n";
+                return 2;
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: gambling_game [--gui] [--port N] [--no-open]\n";
-            return false;   // caller exits cleanly
+            return 1;   // help, caller exits cleanly
         } else {
             std::cerr << "Unknown flag: " << arg << " (try --help)\n";
-            return false;
+            return 2;
         }
     }
-    return true;
+    return 0;
 }
 
 void openInBrowser(const std::string& url) {
@@ -61,7 +78,12 @@ void openInBrowser(const std::string& url) {
 
 int main(int argc, char** argv) {
     bool guiMode = false;
-    if (!parseFlags(argc, argv, guiMode)) return 0;
+    const int flags = parseFlags(argc, argv, guiMode);
+    if (flags) return flags == 1 ? 0 : 2;
+    if (!guiMode && !isatty(STDIN_FILENO)) {
+        std::cerr << "The terminal game needs an interactive terminal. Use --gui --no-open for the browser interface.\n";
+        return 2;
+    }
 
     try {
         GamblingGame game;

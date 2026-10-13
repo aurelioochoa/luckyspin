@@ -19,6 +19,10 @@
 #include <map>
 #include <cstdlib>
 #include <cmath>
+#include <limits>
+#include <fstream>
+#include "web/api.h"
+#include "core/terminal_ui.h"
 
 #include "core/text_width.h"
 #include "core/money.h"
@@ -1061,6 +1065,7 @@ static void testActions() {
 
     SilenceCout quiet;
     GamblingGame game;
+    game.setHeadless(true);
 
     // ---- wheel ----
     const double startBalance = game.getMoney();
@@ -1143,6 +1148,7 @@ static void testActions() {
     // Fresh instance for deterministic balances ($100 start).
     SilenceCout quiet2;
     GamblingGame shopGame;
+    shopGame.setHeadless(true);
 
     // Upgrades first: level 1 of "Lucky Wheel" costs exactly 100.
     double upgCost = 0.0;
@@ -1178,6 +1184,7 @@ static void testActions() {
 
     // Funded instance exercises successful purchases end-to-end.
     GamblingGame funded;
+    funded.setHeadless(true);
     const double fundedStart = funded.getMoney();
     check(funded.buyGeneratorCount(0, 3, cost, bought), "buying 3 Tip Jars succeeds");
     checkEqual(bought, 3, "purchase reports quantity bought");
@@ -1187,6 +1194,39 @@ static void testActions() {
               "purchase deducts exactly the bulk cost");
     check(funded.buyGeneratorCount(0, 0, cost, bought), "MAX mode buys");
     check(bought >= 1, "MAX mode buys at least one more");
+
+    // Both MAX sentinels must buy in bulk: the terminal sends 0, the web GUI
+    // historically sent -1 (which used to silently buy exactly one).
+    {
+        GamblingGame bulk;
+        const Generator jar = bulk.allGenerators()[0];
+        const double bulkStart = bulk.getMoney();
+        const int expected =
+            economy::maxAffordable(jar, bulkStart, 1.0);
+        check(expected >= 2,
+              "starting balance affords several jars for the MAX test");
+
+        double maxCost = 0.0;
+        int maxBought = 0;
+        check(bulk.buyGeneratorCount(0, 0, maxCost, maxBought),
+              "amount 0 means MAX");
+        checkEqual(maxBought, expected, "MAX buys exactly maxAffordable");
+        checkNear(maxCost, economy::bulkCost(jar, expected, 1.0), 1e-6,
+                  "MAX charges the exact bulk price");
+        checkNear(bulk.getMoney(), bulkStart - maxCost, 1e-9,
+                  "MAX deducts exactly the quoted price");
+
+        GamblingGame legacy;
+        double legacyCost = 0.0;
+        int legacyBought = 0;
+        check(legacy.buyGeneratorCount(0, -1, legacyCost, legacyBought),
+              "amount -1 also means MAX (web GUI convention)");
+        checkEqual(legacyBought, expected,
+                   "legacy -1 sentinel buys the same bulk quantity");
+        checkNear(legacyCost, maxCost, 1e-6,
+                  "both sentinels charge the same price");
+    }
+
     check(funded.setBetAmount(5.0), "valid bet accepted with funds");
 }
 
@@ -1195,6 +1235,7 @@ static void testBlackjackFlow() {
 
     SilenceCout quiet;
     GamblingGame game;
+    game.setHeadless(true);
 
     check(game.blackjackDeal(25.0), "first deal succeeds");
     check(game.blackjackPhase() == BlackjackPhase::PlayerTurn,
@@ -1268,6 +1309,110 @@ static void testBlackjackFlow() {
     } else if (finalTotal == 21) {
         check(game.blackjackHit().outcome == BlackjackOutcome::None,
               "hit at 21 is ignored");
+    }
+}
+
+static void testReliability() {
+    suite("interface and engine reliability regressions");
+    SilenceCout quiet;
+    GamblingGame game;
+    game.setHeadless(true);
+    game.setHeadless(true);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    check(!game.blackjackDeal(nan), "NaN blackjack bet cannot corrupt balance");
+    check(!game.blackjackDeal(inf), "infinite blackjack bet refused");
+    check(!game.spinWheelRound(nan).played, "NaN wheel bet refused");
+    check(!game.playSlotsRound(inf).played, "infinite slots bet refused");
+    check(!game.dropPlinkoBall(nan, 0).played, "NaN Plinko bet refused");
+    check(!game.setBetAmount(nan), "NaN shared bet refused");
+    checkNear(game.getMoney(), 100.0, 1e-9, "invalid wagers preserve the bankroll");
+    checkEqual(game.executePrestige(), 0, "engine blocks prestige without qualifying earnings");
+    checkEqual(game.getPrestigeLevel(), 0, "refused prestige preserves level");
+
+    // Load a legacy-format fixture into this instance; reset must clear everything.
+    const string fixture = "/tmp/luckyspin-regression-" + std::to_string(getpid()) + ".txt";
+    {
+        std::ofstream out(fixture.c_str());
+        out << "LUCKY_SPIN_SAVE_V1\nmoney=100000\nlifetimeEarnings=400000\n"
+            << "prestigeLevel=2\nprestigeStars=20\nperkStartingMoney=3\n"
+            << "perkPassiveBoost=4\nperkOfflineCap=2\nperkGeneratorDiscount=2\n"
+            << "achievementMultiplier=1.2\nachFirstWin=1\nspecializationId=3\n"
+            << "interestUnlocked=1\nactiveEventId=1\neventEndTime=9999999999\n";
+    }
+    time_t timestamp = 0;
+    check(game.loadFrom(fixture, timestamp), "progress fixture loads");
+    std::remove(fixture.c_str());
+    check(game.blackjackDeal(10), "live hand opened before prestige");
+    check(game.executePrestige() > 0, "qualifying prestige succeeds");
+    check(game.blackjackPhase() == BlackjackPhase::Idle, "prestige closes old blackjack hand");
+    checkEqual(game.bjPlayerCards().size(), (size_t)0, "prestige removes stale cards");
+    check(game.getPerkLevel(0) > 0, "prestige keeps purchased perks");
+    check(game.blackjackDeal(10), "live hand opened before restart");
+    game.resetGame();
+    check(game.blackjackPhase() == BlackjackPhase::Idle, "restart clears the live hand");
+    checkEqual(game.getPrestigeStars(), 0, "restart clears prestige stars");
+    checkEqual(game.getSpecializationId(), 0, "restart clears specialty");
+    for (int i = 0; i < 4; ++i) checkEqual(game.getPerkLevel(i), 0, "restart clears perk");
+    checkEqual(game.getAchievementCount(), 0, "restart clears achievements");
+    checkNear(game.getTotalPassiveIncome(), 0.0, 1e-9, "restart clears passive boosts");
+    checkNear(game.getMoney(), 100.0, 1e-9, "restart restores starting bankroll");
+    check(!game.isInterestUnlocked(), "restart clears bank milestone");
+    checkEqual(game.getActiveEventId(), 0, "restart clears active event");
+    checkEqual(game.takeNotifications().size(), (size_t)0, "restart clears stale toasts");
+
+    // The JSON action boundary must reject values before any integer cast.
+    for (const string& body : {string("{\"action\":\"buy_gen\",\"index\":1e99}"),
+                               string("{\"action\":\"roulette\",\"type\":1.5}"),
+                               string("{\"action\":\"set_spec\",\"id\":9}")}) {
+        const web::Response r = api::handle(game, web::Request{"POST", "/api/action", body});
+        check(r.body.find("\"ok\":false") != string::npos, "invalid API integer refused");
+    }
+    checkNear(game.getMoney(), 100, 1e-9, "invalid API actions leave balance unchanged");
+    const web::Response state = api::handle(game, web::Request{"GET", "/api/state", ""});
+    check(state.body.find("\"runEarnings\":") != string::npos, "prestige progress exposes earnings for this run");
+    const web::Response art = api::handle(game, web::Request{"GET", "/assets/casino.png", ""});
+    check(art.contentType == "image/png" && art.body.substr(1,3) == "PNG", "binary embeds generated PNG artwork");
+
+    // Clipboard-width helper preserves UTF-8 and ANSI and never wraps.
+    const string wide = "🎰 balance";
+    checkEqual(text::displayWidth(tui::fit(wide, 1)), 1, "wide glyph is clipped without splitting bytes");
+    checkEqual(tui::fit("abc", 5), string("abc  "), "dashboard padding is exact");
+    checkEqual(text::displayWidth(tui::fit("\033[32m🎰 $12345\033[0m", 6)), 6,
+               "colored dashboard content fits its cell");
+    checkEqual(tui::fit(wide, 0), string(""), "zero-width cells are empty");
+
+    // Verify every specialty changes actual winning payouts, not only UI copy.
+    for (int spec = 1; spec <= 5; ++spec) {
+        GamblingGame specialized;
+        specialized.setHeadless(true);
+        specialized.setSpecializationId(spec);
+        bool won = false;
+        for (int attempt = 0; attempt < 1000 && !won; ++attempt) {
+            double payout = 0;
+            if (spec == 1) payout = specialized.spinWheelRound(.01).payout;
+            if (spec == 2) payout = specialized.playSlotsRound(.01).payout;
+            if (spec == 4) payout = specialized.playRouletteRound(.01, 1, -1).payout;
+            if (spec == 5) {
+                const PlinkoRound r = specialized.dropPlinkoBall(.01, 0);
+                checkNear(r.payout, .01 * plinko::multiplierTable(plinko::Risk::LOW)[r.bucket] * 1.5,
+                          1e-9, "Plinko specialty boosts actual return");
+                won = true;
+            } else if (spec == 3) {
+                specialized.blackjackDeal(.01);
+                const BlackjackSettlement r = specialized.blackjackStand();
+                if (r.outcome == BlackjackOutcome::Win) {
+                    checkNear(r.payout, .01 * (r.playerNatural ? 2.5 : 2.0) * 1.5,
+                              1e-9, "blackjack specialty boosts actual return");
+                    won = true;
+                }
+            } else if (payout > 0) {
+                checkNear(payout, .01 * (spec == 2 ? 5 : 2) * 1.5,
+                          1e-9, "game specialty boosts actual return");
+                won = true;
+            }
+        }
+        check(won, "specialty exercised a successful round");
     }
 }
 
@@ -1493,6 +1638,7 @@ int main() {
     testChecksum();
     testActions();
     testBlackjackFlow();
+    testReliability();
     testWebJson();
     testWebServer();
 

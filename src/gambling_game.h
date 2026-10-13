@@ -347,6 +347,7 @@ public:
     string specializationName() const;
     void displayMenu();
     void displayStatus();
+    void displayAbout();
     void showAchievement(const string& name, const string& desc);
     void showEvent(const string& name, const string& desc);
     void displayAchievements();
@@ -426,6 +427,7 @@ public:
 
     // ---- game_shops.cpp ----
     void displayUpgradeShop();
+    void displayShop(bool generatorShop);
     void purchaseUpgrade(int index);
     void displayPrestigeMenu();
     void displayPrestigeShop();

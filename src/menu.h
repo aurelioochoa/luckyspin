@@ -31,7 +31,7 @@ enum class MenuAction {
     SpinWheel, PlaySlots, Blackjack, Roulette, Plinko,   // GAMES
     GeneratorShop, UpgradeShop,                          // SHOP
     ChangeBet, Prestige, Specialization, Achievements,   // OPTIONS
-    Save, Restart, Quit
+    About, Save, Restart, Quit
 };
 
 struct MenuEntry {
@@ -54,6 +54,7 @@ const MenuEntry MENU_TABLE[] = {
     {nullptr,   UI::STAR,    "Prestige",        MenuAction::Prestige},
     {nullptr,   UI::TARGET,  "Specialization",  MenuAction::Specialization},
     {nullptr,   UI::TROPHY,  "Achievements",    MenuAction::Achievements},
+    {nullptr,   "?",         "About & help",    MenuAction::About},
     {nullptr,   UI::FLOPPY,  "Save Game",       MenuAction::Save},
     {nullptr,   UI::REFRESH, "Restart Game",    MenuAction::Restart},
     {nullptr,   UI::DOOR,    "Quit Game",       MenuAction::Quit}

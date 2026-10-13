@@ -7,6 +7,8 @@
 #include "api.h"
 #include "json.h"
 #include "web_assets.h"
+#include "art_assets.h"
+#include <limits>
 
 #include "../colors.h"
 #include "../symbols.h"
@@ -123,6 +125,7 @@ std::string blackjackJson(GamblingGame& game) {
 std::string stateJson(GamblingGame& game) {
     // Polling alone keeps the idle economy alive.
     game.updatePassiveIncome();
+    game.autoSave();
 
     std::ostringstream o;
 
@@ -140,6 +143,7 @@ std::string stateJson(GamblingGame& game) {
       << ",\"multiplier\":" << json::num(game.getPrestigeMultiplier(), 1)
       << ",\"stars\":" << json::integer(game.getPrestigeStars())
       << ",\"totalLifetime\":" << moneyStr(game.getTotalLifetimeEarnings())
+      << ",\"runEarnings\":" << moneyStr(game.getLifetimeEarnings())
       << ",\"requirement\":" << moneyStr(game.getPrestigeRequirement())
       << ",\"canPrestige\":" << json::boolean(game.canPrestige())
       << ",\"nextStars\":" << json::integer(game.calculatePrestigeStars()) << "},";
@@ -297,17 +301,31 @@ Response runAction(GamblingGame& game, const json::FlatObject& action) {
     const std::string name = action.getString("action");
     std::ostringstream result;
 
+    // Prevent undefined float-to-int conversions and silently truncated IDs.
+    const char* integerFields[] = {"index", "amount", "type", "number", "risk", "id"};
+    for (const char* field : integerFields) {
+        if (name == "set_bet" && std::string(field) == "amount") continue;
+        auto it = action.numbers.find(field);
+        if (it != action.numbers.end()) {
+            const double value = it->second;
+            if (!std::isfinite(value) || value != std::floor(value)
+                || value < std::numeric_limits<int>::min()
+                || value > std::numeric_limits<int>::max())
+                return errorResponse("Invalid integer: " + std::string(field));
+        }
+    }
+
     if (name == "wheel") {
         const WheelRound r = game.spinWheelRound(action.getNumber("bet", game.getCurrentBet()));
         if (!r.played) return errorResponse("Not enough money for that bet.");
-        result << "{\"round\":\"wheel\",\"won\":" << json::boolean(r.won)
+        result << "{\"bet\":" << moneyStr(r.bet) << ",\"round\":\"wheel\",\"won\":" << json::boolean(r.won)
                << ",\"payout\":" << moneyStr(r.payout)
                << ",\"hotStreak\":" << json::boolean(r.hotStreak)
                << ",\"luckyBonus\":" << json::boolean(r.luckyBonus) << "}";
     } else if (name == "slots") {
         const SlotsRound r = game.playSlotsRound(action.getNumber("bet", game.getCurrentBet()));
         if (!r.played) return errorResponse("Not enough money for that bet.");
-        result << "{\"round\":\"slots\",\"won\":" << json::boolean(r.won)
+        result << "{\"bet\":" << moneyStr(r.bet) << ",\"round\":\"slots\",\"won\":" << json::boolean(r.won)
                << ",\"reels\":[" << r.reels[0] << "," << r.reels[1] << "," << r.reels[2] << "]"
                << ",\"payout\":" << moneyStr(r.payout)
                << ",\"hotStreak\":" << json::boolean(r.hotStreak)
@@ -320,7 +338,7 @@ Response runAction(GamblingGame& game, const json::FlatObject& action) {
         if (!r.played) return errorResponse("Invalid bet or insufficient funds.");
         const char* color = r.result == 0 ? "green"
                           : roulette::isRed(r.result) ? "red" : "black";
-        result << "{\"round\":\"roulette\",\"won\":" << json::boolean(r.won)
+        result << "{\"bet\":" << moneyStr(r.bet) << ",\"round\":\"roulette\",\"won\":" << json::boolean(r.won)
                << ",\"result\":" << r.result
                << ",\"color\":\"" << color << "\""
                << ",\"luckySeven\":" << json::boolean(r.luckySeven)
@@ -332,7 +350,7 @@ Response runAction(GamblingGame& game, const json::FlatObject& action) {
             action.getNumber("bet", game.getCurrentBet()),
             (int)action.getNumber("risk", 0));
         if (!r.played) return errorResponse("Invalid risk level or insufficient funds.");
-        result << "{\"round\":\"plinko\",\"bucket\":" << r.bucket
+        result << "{\"bet\":" << moneyStr(r.bet) << ",\"round\":\"plinko\",\"bucket\":" << r.bucket
                << ",\"jackpot\":" << json::boolean(r.jackpot)
                << ",\"path\":[";
         for (size_t i = 0; i < r.path.size(); i++) {
@@ -399,7 +417,9 @@ Response runAction(GamblingGame& game, const json::FlatObject& action) {
         }
         result << "{\"round\":\"bet\"}";
     } else if (name == "set_spec") {
-        game.setSpecializationId((int)action.getNumber("id", 0));
+        const int id = (int)action.getNumber("id", -1);
+        if (id < 0 || id > 5) return errorResponse("Unknown specialization.");
+        game.setSpecializationId(id);
         result << "{\"round\":\"spec\"}";
     } else if (name == "prestige") {
         if (!game.canPrestige()) {
@@ -419,14 +439,21 @@ Response runAction(GamblingGame& game, const json::FlatObject& action) {
 
     // Every successful mutation is persisted immediately; saves are small,
     // atomic and infrequent enough not to matter.
-    game.saveGame();
+    const bool saved = game.saveGame();
     return jsonResponse("{\"ok\":true,\"result\":" + result.str()
+                        + ",\"saved\":" + json::boolean(saved)
                         + ",\"state\":" + stateJson(game) + "}");
 }
 
 } // namespace
 
 Response handle(GamblingGame& game, const web::Request& req) {
+    if (req.method == "GET" && req.path == "/assets/casino.png") {
+        Response res;
+        res.contentType = "image/png";
+        res.body.assign(reinterpret_cast<const char*>(assets::CASINO_PNG), sizeof(assets::CASINO_PNG));
+        return res;
+    }
     if (req.method == "GET" && req.path == "/") {
         Response res;
         res.contentType = "text/html";

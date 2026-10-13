@@ -36,7 +36,7 @@
  */
 static bool placeBet(GamblingGame& self, double& money, double bet) {
     (void)self;
-    if (bet <= 0.0 || !(bet == bet) /* NaN */ || money < bet) return false;
+    if (!std::isfinite(bet) || bet <= 0.0 || money < bet) return false;
     money -= bet;
     return true;
 }
@@ -60,6 +60,7 @@ WheelRound GamblingGame::spinWheelRound(double bet) {
 
     if (round.won) {
         double winAmount = bet * payoutMult;
+        if (specializationId == 1) winAmount *= getSpecializationMultiplier();
 
         const double eventMult = economy::eventPayoutMultiplier(activeEventId);
         if (eventMult != 1.0) {
@@ -115,6 +116,7 @@ SlotsRound GamblingGame::playSlotsRound(double bet) {
 
     if (triple) {
         double winAmount = bet * payoutMult;
+        if (specializationId == 2) winAmount *= getSpecializationMultiplier();
 
         const double eventMult = economy::eventPayoutMultiplier(activeEventId);
         if (eventMult != 1.0) {
@@ -173,6 +175,7 @@ RouletteRound GamblingGame::playRouletteRound(double bet, int betType,
         if (round.luckySeven) {
             winAmount += bet * getUpgradeValue(UpgradeType::LUCKY_NUMBER);
         }
+        if (specializationId == 4) winAmount *= getSpecializationMultiplier();
 
         const double eventMult = economy::eventPayoutMultiplier(activeEventId);
         if (eventMult != 1.0) {
@@ -273,7 +276,7 @@ PlinkoRound GamblingGame::dropPlinkoBall(double bet, int risk) {
 
 bool GamblingGame::blackjackDeal(double bet) {
     if (bjPhase == BlackjackPhase::PlayerTurn) return false; // hand live
-    if (bet <= 0.0 || money < bet) return false;
+    if (!std::isfinite(bet) || bet <= 0.0 || money < bet) return false;
 
     if (shoe.needsShuffle()) {
         shoe.shuffle(Rng::global());
@@ -382,6 +385,7 @@ BlackjackSettlement GamblingGame::blackjackStand() {
         if (bjSettled.playerNatural) basePayout += 0.5;
 
         double winAmount = bjBet * basePayout;
+        if (specializationId == 3) winAmount *= getSpecializationMultiplier();
 
         const double eventMult = economy::eventPayoutMultiplier(activeEventId);
         if (eventMult != 1.0) {
@@ -441,10 +445,11 @@ bool GamblingGame::buyGeneratorCount(int index, int amount,
     if (index < 0 || index >= (int)generators.size()) return false;
 
     Generator& gen = generators[index];
-    int count = (amount < 0) ? 1 : amount;
+    int count = amount;
 
-    if (count == 0) {
-        // MAX mode: buy as many as the balance allows.
+    if (count <= 0) {
+        // MAX mode: buy as many as the balance allows. The terminal sends 0;
+        // the web GUI historically sent -1, so any non-positive amount means MAX.
         count = getGeneratorMaxAffordable(gen, money);
         if (count <= 0) {
             costOut = gen.getCurrentCost();
@@ -519,7 +524,7 @@ bool GamblingGame::buyPerkLevel(int perkIndex, int& costOut) {
 }
 
 bool GamblingGame::setBetAmount(double amount) {
-    if (amount <= 0.0 || !(amount == amount) || amount > money) return false;
+    if (!std::isfinite(amount) || amount <= 0.0 || amount > money) return false;
     betAmount = amount;
     return true;
 }
@@ -534,6 +539,7 @@ void GamblingGame::setSpecializationId(int id) {
  * rendering. Returns stars earned so callers can celebrate appropriately.
  */
 int GamblingGame::executePrestige() {
+    if (!canPrestige()) return 0;
     const int starsEarned = calculatePrestigeStars();
     prestigeStars += starsEarned;
 
@@ -560,6 +566,11 @@ int GamblingGame::executePrestige() {
 
     // A fresh balance means fresh income timing.
     lastUpdateTime = time(0);
+    bjPhase = BlackjackPhase::Idle;
+    bjPlayer.clear();
+    bjDealer.clear();
+    bjBet = 0.0;
+    bjSettled = BlackjackSettlement{};
 
     checkPrestigeAchievements();
     checkMilestones();

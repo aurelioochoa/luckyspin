@@ -33,41 +33,20 @@
  * confirmRestart() - Ask for confirmation before resetting all progress
  */
 void GamblingGame::confirmRestart() {
-    clearScreen();
-    printLine('=', 50, Color::YELLOW);
-    cout << Color::BOLD << Color::YELLOW;
-    printCentered("RESTART GAME", 50);
-    cout << Color::RESET;
-    printLine('=', 50, Color::YELLOW);
-    
-    cout << "\n";
-    printCentered("Are you sure you want to restart?", 50, Color::WHITE);
-    cout << "\n";
-    cout << "  " << Color::RED << "WARNING: " << Color::RESET 
-         << "This will delete ALL progress including:\n";
-    cout << "    - Money and bet amount\n";
-    cout << "    - All generators and upgrades\n";
-    cout << "    - Prestige level and multiplier\n";
-    cout << "    - Statistics and achievements\n";
-    cout << "    - Save file\n";
-    cout << "\n";
-    printCentered("This action CANNOT be undone!", 50, Color::RED + Color::BOLD);
-    cout << "\n\n";
-    cout << "  " << Color::GREEN << "[Y]" << Color::RESET << " Yes, restart from scratch\n";
-    cout << "  " << Color::RED << "[N]" << Color::RESET << " No, keep playing\n";
-    cout << "\n  Your choice: ";
-    
-    char choice = getch();
-    
-    if (choice == 'y' || choice == 'Y') {
-        resetGame();
-        cout << "\n\n  " << Color::GREEN << UI::CHECK << " Game has been reset!" << Color::RESET;
-        cout << "\n  " << Color::DIM << "Starting fresh with $100..." << Color::RESET;
-        usleep(2000000);
-    } else {
-        cout << "\n\n  " << Color::CYAN << "Restart cancelled." << Color::RESET;
-        usleep(1000000);
-    }
+    clearScreen(); displayHeader();
+    terminal::line(Color::RED + Color::BOLD + "RESET ALL PROGRESS?");
+    terminal::rule();
+    terminal::line("This clears your entire casino:");
+    terminal::line("Money, generators, and upgrades");
+    terminal::line("Prestige, stars, and permanent perks");
+    terminal::line("Achievements and your active hand");
+    terminal::line(Color::DIM + "You start over with $100. This cannot be undone.");
+    terminal::rule();
+    terminal::line(Color::RED + "Y  Reset everything");
+    terminal::line(Color::GREEN + "Any other key  Keep playing");
+    terminal::finishScreen();
+    const char key = getch();
+    if (key == 'y' || key == 'Y') { resetGame(); saveGame(); }
 }
 
 /*
@@ -80,7 +59,7 @@ void GamblingGame::resetGame() {
     peakMoney = 100.0;
     
     // Reset statistics
-    round = 0;
+    round = 1;
     totalWins = 0;
     totalLosses = 0;
     currentWinStreak = 0;
@@ -111,6 +90,24 @@ void GamblingGame::resetGame() {
     achGenerator10 = false;
     achAllUpgrades = false;
     achPlinkoJackpot = false;
+    achievementMultiplier = 1.0;
+    prestigeStars = 0;
+    perkStartingMoney = perkGeneratorDiscount = perkOfflineCap = perkPassiveBoost = 0;
+    specializationId = 0;
+    interestUnlocked = false;
+    interestRate = 0.001;
+    for (int i = 0; i < 10; ++i) milestoneUnlocked[i] = false;
+    activeEventId = economy::EVENT_NONE;
+    eventEndTime = 0;
+    nextEventTime = time(0) + economy::EVENT_MIN_GAP_SECONDS
+                  + Rng::global().range(0, economy::EVENT_GAP_SPREAD_SECONDS);
+    bjPhase = BlackjackPhase::Idle;
+    bjPlayer.clear();
+    bjDealer.clear();
+    bjBet = 0.0;
+    bjSettled = BlackjackSettlement{};
+    shoe.shuffle(Rng::global());
+    notificationQueue.clear();
     
     // Reset menu and animation state
     menuSelection = 0;
@@ -119,6 +116,7 @@ void GamblingGame::resetGame() {
     // Reset time tracking
     lastUpdateTime = time(0);
     lastSaveTime = time(0);
+    gameStartTime = time(0);
     
     // Delete save file (and its backup, so a restart really is a restart)
     deleteSaveFile();
@@ -164,6 +162,7 @@ bool GamblingGame::dispatchMenuAction(MenuAction action) {
         case MenuAction::Prestige:       displayPrestigeMenu(); break;
         case MenuAction::Specialization: displaySpecializationMenu(); break;
         case MenuAction::Achievements:   displayAchievements(); break;
+        case MenuAction::About:          displayAbout(); break;
         case MenuAction::Save:
             // Manual save (Sprint 3)
             if (saveGame()) {
@@ -191,12 +190,13 @@ void GamblingGame::play() {
         // Update passive income before displaying
         // This is crucial for the incremental game feel
         updatePassiveIncome();
+        autoSave();
         
         displayStatus();
         
         // Use non-blocking input with timeout for real-time updates (Sprint 6)
         // This allows the balance to update visually every second
-        choice = getchWithTimeout(1000);  // 1 second timeout
+        choice = getMenuInput(1000);
         
         // If timeout (no input), just refresh the display
         if (choice == 0) {
@@ -248,6 +248,12 @@ void GamblingGame::play() {
         }
         else if (choice == 'q' || choice == 'Q') {
             quit = true;
+        }
+        else if (choice == '?') {
+            displayAbout();
+        }
+        else if (choice == 'v' || choice == 'V') {
+            dispatchMenuAction(MenuAction::Save);
         }
         // Any other input is ignored - just refresh the display
         

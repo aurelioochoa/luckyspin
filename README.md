@@ -1,394 +1,149 @@
-# 🎰 Lucky Spin Casino
+![Ivory dice, emerald chips, and brass roulette on green felt](web/assets/casino.png)
 
-A terminal- and browser-based incremental gambling game written in C++ for Linux.
+# Lucky Spin
 
-![C++11](https://img.shields.io/badge/C%2B%2B-11-blue.svg)
-![Platform](https://img.shields.io/badge/Platform-Linux-green.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+A casino you can build. Five games, an idle economy, and a growing empire — in your terminal or browser, powered by the same C++ engine.
 
-## 📖 Overview
+[![C++11](https://img.shields.io/badge/C%2B%2B-11-355e48)](src/core)
+[![Linux](https://img.shields.io/badge/platform-Linux-355e48)](#getting-started)
+[![MIT](https://img.shields.io/badge/license-MIT-b69a57)](LICENSE)
 
-**Lucky Spin Casino** is an incremental/idle game with a casino theme. Start with $100, play various casino games, purchase passive income generators, unlock upgrades, and work your way to becoming a casino tycoon!
+All balances are fictional game currency. Playing needs no account, payment, or internet connection.
 
-### Features
+## Getting started
 
-#### 🎮 Core Gameplay
-- 🎡 **Spin the Wheel** - 50% chance, 2x payout
-- 🎰 **Slot Machine** - Match symbols for jackpots
-- 🃏 **Blackjack** - Classic 21 card game
-- 🎲 **Roulette** - Bet on colors, numbers, odd/even
-- 🎯 **Plinko** - Drop a ball through 10 rows of pegs across three risk levels
-
-#### 💰 Progression Systems
-- 🏪 **Generator Shop** - Buy passive income sources with bulk buy (x1/x10/x25/x100/MAX)
-- ⬆️ **Upgrade Shop** - Improve odds and payouts
-- ⭐ **Prestige System** - Reset for permanent multipliers and prestige stars
-- 🏆 **Achievements** - Unlock rewards (+1% income per achievement)
-- 💾 **Auto-Save** - Progress saved automatically every 30 seconds
-
-#### 🌟 Advanced Features (Phase B)
-- ⭐ **Prestige Stars** - Spendable currency earned from prestige
-- 🛒 **Prestige Shop** - Permanent perks (starting money, generator discounts, passive boost, offline cap)
-- 📈 **Achievement Rewards** - Each achievement grants +1% permanent income bonus
-
-#### ⚡ Random Events (Phase D)
-- 🍸 **Happy Hour** - Passive income doubled for 60 seconds
-- 🔥 **Hot Streak** - All game payouts x1.5 for 60 seconds
-- 💸 **Money Rain** - Instant cash payout (~30 seconds of income)
-
-#### 🖥️ Web GUI
-- Run `make gui` and play at `http://127.0.0.1:8787/` in any browser
-- Animated wheel, slot reels, canvas Plinko board and blackjack table
-- Same rules as the terminal version - one shared headless engine
-
-#### 🎯 Strategic Depth (Phase C)
-- 🏆 **Milestones** - Unlock new mechanics at progression thresholds
-- 🎯 **Specialization** - Choose a casino specialty for +50% payout bonus
-- 🔗 **Generator Synergies** - Threshold bonuses and tier boosts
-- 🏦 **Interest System** - Earn passive income from your bankroll (unlocked via milestone)
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **GCC/G++** with C++11 support
-- **Linux** terminal with ANSI color support
-- **Noto fonts** (recommended for Unicode symbols)
-
-### Build & Run
+Requires Linux, a C++11 compiler, GNU Make, and Python 3 for embedding the artwork. No runtime dependencies beyond the system C++ libraries. A modern browser is needed for the GUI; a UTF-8 terminal is needed for the TUI.
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/lucky-spin-casino.git
-cd lucky-spin-casino
-
-# Build the game
-make
-
-# Run the terminal UI
-make run
-
-# Or run the web GUI (opens http://127.0.0.1:8787/)
-make gui
+git clone https://github.com/aurelioochoa/luckyspin.git
+cd luckyspin
+make build
+make run                  # Terminal game
+make gui                  # Browser game at http://127.0.0.1:8787
 ```
 
-The web GUI binds to 127.0.0.1 only, auto-saves after every action, and
-keeps passive income ticking while the page is open. Flags: `--port N`
-(default 8787), `--no-open` to suppress launching a browser.
-
-### Install as Command
+The HTML and generated artwork are embedded in the executable. You can move or install the binary without copying an asset folder.
 
 ```bash
-# Install to ~/.local/bin (no sudo required)
-make install
-
-# Now you can run from anywhere
-lucky-spin
-
-# To uninstall
-make uninstall
+./gambling_game --gui --no-open --port 8788
+make install              # Installs ~/.local/bin/lucky-spin
+lucky-spin --gui
 ```
 
-## 🎮 Controls
+The web server binds to localhost. If the requested port is busy, it tries the next 20 ports without exceeding 65535; the startup message prints the actual URL. Use `Ctrl+C` to stop it and save progress.
 
-| Key | Action |
-|-----|--------|
-| **W / ↑** | Navigate up |
-| **S / ↓** | Navigate down |
-| **Enter / Space / D** | Select option |
-| **E** | Change buy mode (in shops) |
-| **Q** | Quick exit / Cancel |
-| **0-9** | Quick select menu items |
+## Two ways to play
 
-## 📦 Project Structure
+### Terminal
 
-```
-lucky-spin-casino/
-├── Makefile             # Build configuration
-├── README.md            # This file
-├── LICENSE              # MIT license
-├── docs/
-│   ├── GDD.md           # Game Design Document
-│   └── GAMEPLAY_IMPROVEMENTS.md
-├── src/
-│   ├── main.cpp          # Entry point: terminal UI or --gui web server
-│   ├── gambling_game.h   # GamblingGame class declaration
-│   ├── menu.h            # Main menu table (MenuAction/MenuEntry)
-│   ├── game_init.cpp     # Construction + generator/upgrade definitions
-│   ├── game_economy.cpp  # Economy glue (delegates to core/economy.h)
-│   ├── game_actions.cpp  # Headless rules shared by both frontends
-│   ├── game_display.cpp  # Terminal rendering (header, stats, menus)
-│   ├── game_games.cpp    # Terminal rendering of the playable games
-│   ├── game_shops.cpp    # Shops, prestige, specialization
-│   ├── game_save.cpp     # Persistence (atomic save/load, checksum)
-│   ├── game_loop.cpp     # Main loop + menu dispatch
-│   ├── web/              # Embedded web GUI (HTTP server + JSON API)
-│   ├── colors.h          # ANSI color definitions
-│   ├── unicode.h         # Unicode codepoint constants
-│   ├── symbols.h         # Game-facing symbol sets (Symbols/Cards/UI)
-│   ├── utils.h           # Terminal I/O, display-width helpers
-│   └── core/             # Pure game logic (unit-testable)
-├── tests/               # Unit tests
-└── test_unicode.cpp     # Unicode compatibility test
+A compact dashboard shows bankroll, stake, income, prestige, and run statistics. Wide terminals get a two-column menu; smaller windows get a scrolling list that keeps your selection visible. Shops show details for the highlighted item and keep earning income while you browse.
+
+```text
+  ♠  LUCKY SPIN  /  casino & idle empire
+  ────────────────────────────────────────────────────────────────────────
+  BANKROLL  $100.00                     PASSIVE  +$0.00/s
+  Bet $10.00  ·  Round 1                Prestige 0  ·  Stars 0
+  Wins 0  /  Losses 0                   Peak $100.00
+  Build your income. Upgrade your odds. Play your way.
+  ────────────────────────────────────────────────────────────────────────
+  THE FLOOR / SHOPS                     YOUR EMPIRE
+  › 0  Spin the Wheel                   7  Change Bet
+    1  Play Slots                      8  Prestige
+    2  Blackjack                       9  Specialization
+    3  Roulette                           Achievements
+    4  Plinko                             About & help
+    5  Generator Shop                     Save Game
+    6  Upgrade Shop                       Restart Game
+                                          Quit Game
+  ────────────────────────────────────────────────────────────────────────
+  Spin the Wheel (50% chance, 2.00x)
+  ↑/↓ W/S move · Enter play · 0–9 jump
+  V save · ? help · Q quit
 ```
 
-## 🔧 Make Targets
+| Control | Action |
+| --- | --- |
+| ↑ / ↓ or W / S | Move through choices |
+| Enter, Space, or D | Select the highlighted choice |
+| 0–9 | Run the numbered main-menu action |
+| V | Save from the main menu |
+| ? | Read paged rules and keyboard help |
+| Q | Leave a submenu; quit and save from the main menu |
+| E in Generator Shop | Cycle ×1 / ×10 / ×25 / ×100 / MAX |
 
-| Command | Description |
-|---------|-------------|
-| `make` | Build the game |
-| `make run` | Build and run the terminal UI |
-| `make gui` | Build and serve the web GUI |
-| `make test` | Run the unit/integration test suite |
-| `make clean` | Remove build files |
-| `make install` | Install as `lucky-spin` command |
-| `make uninstall` | Remove installed command |
-| `make help` | Show all available targets |
+`NO_COLOR=1 ./gambling_game` disables color styling. The game restores your terminal settings and cursor on exit or interruption.
 
-### Font Installation
+### Browser
 
-For proper Unicode symbol display:
+Select a table, set your stake, and play. Each table has a rule summary; results show both the gross return and net change. The interface includes bet validation, pending-action feedback, reconnect status, keyboard focus, reduced-motion support, and confirmations for resets.
+
+![Lucky Spin browser interface](docs/screenshots/gui-desktop.png)
+
+Use **1–5** to select a table, **Tab** to move between controls, **Enter** to activate them, and **Esc** to close confirmations. Number shortcuts pause while typing. The interface adapts to mobile screens.
+
+## Build your empire
+
+Start with **$100**. A **$10 Tip Jar** earns **$0.10/s**, so buy one early to give yourself steady income between rounds.
+
+| Game | Base rules |
+| --- | --- |
+| Wheel | 50% win chance; 2× return |
+| Slots | Match three symbols; 5× return |
+| Blackjack | Six-deck shoe; dealer stands at 17; 2× return, 2.5× for a winning natural; ties return the stake |
+| Roulette | European 0–36 wheel; outside bets return 2×, straight numbers 35×; zero loses outside bets |
+| Plinko | Three risk levels; edge returns of 2× / 6× / 35× |
+
+Returns include the original stake: a $10 bet returning $20 earns $10 net. Upgrades, specializations, and events can increase returns.
+
+- **11 generators** with bulk buying and ownership synergies.
+- **12 upgrade lines** for odds, payouts, and passive income.
+- **Five game specialties** with a 50% payout bonus; an all-rounder option with no bonus.
+- **Nine achievements**, each adding a permanent 1% income bonus.
+- **Prestige** starting at $100K earnings in the current run, with a requirement that doubles each level. Prestige adds 0.1 to your income multiplier and awards stars for four permanent perk lines.
+- **Random events:** Happy Hour doubles passive income, Hot Streak increases payouts, and Money Rain grants an immediate bonus.
+
+Prestige keeps achievements, stars, purchased perks, and your specialty. **Reset all progress** clears everything and starts again at $100.
+
+## Saves and offline income
+
+Both interfaces use the same save:
+
+```text
+${XDG_DATA_HOME:-~/.local/share}/luckyspin/lucky_spin_save.txt
+```
+
+Saves use a checksum, a temporary file, and a backup of the previous save. Legacy saves in the working directory migrate automatically. The terminal saves every 30 seconds, when buying or changing settings, and on normal quit. The browser saves after successful actions and every 30 seconds while polling; server shutdown saves too.
+
+Offline earnings apply when you return, up to the cap determined by your upgrades and perks. Use one running game instance at a time. Finish blackjack hands before closing: the bankroll is saved, but an active hand is not restored.
+
+## Development and verification
 
 ```bash
-# Auto-detect distro and install
-make install-fonts
-
-# Or manually for your distro:
-make install-fonts-arch     # Arch Linux
-make install-fonts-debian   # Debian/Ubuntu
-make install-fonts-fedora   # Fedora/RHEL
-
-# Check if fonts are installed
-make check-fonts
+make                      # Show available commands
+make test                 # Engine, rendering helpers, JSON, and HTTP regressions
+make test-tui             # Real pseudo-terminal navigation and layout checks
+make test-asan            # AddressSanitizer and UndefinedBehaviorSanitizer
+make check                # Core tests and font diagnostics
 ```
 
-## 🎯 Gameplay
+Optional browser regressions require Node.js 20+ and Playwright:
 
-### Core Loop
-
-```
-EARN → UPGRADE → AUTOMATE → PRESTIGE → SPECIALIZE
-  ↑________________________________________________↓
-```
-
-1. **Earn** - Play casino games to win money
-2. **Upgrade** - Purchase upgrades to improve win rates and payouts
-3. **Automate** - Buy generators for passive income (with bulk buy support)
-4. **Prestige** - Reset for permanent multipliers and prestige stars
-5. **Specialize** - Choose your casino specialty and unlock milestones
-6. **Optimize** - Spend prestige stars on permanent perks
-7. **Synergize** - Stack generators for exponential growth
-
-### Generators (Passive Income)
-
-| Generator | Icon | Base Income | Base Cost | Description |
-|-----------|------|-------------|-----------|-------------|
-| Tip Jar | 🫙 | $0.1/sec | $10 | A humble jar collecting spare change |
-| Penny Slots | 🎰 | $0.5/sec | $50 | Old-school one-armed bandits |
-| Auto-Wheel | 🎡 | $2/sec | $200 | A mechanical wheel that spins itself |
-| Card Shark | 🃏 | $5/sec | $500 | A skilled dealer who finds an edge |
-| VIP Table | 👑 | $18/sec | $1,500 | Exclusive high-stakes table |
-| High Roller | 💎 | $60/sec | $5,000 | Wealthy patron who tips big |
-| Casino Floor | 🏛️ | $280/sec | $20,000 | Entire floor generating revenue |
-| Casino Empire | 🌍 | $1,600/sec | $100,000 | Global chain printing money 24/7 |
-| Casino Chain | 🏢 | $10K/sec | $600,000 | A franchise in every major city |
-| Offshore Casino | 🚢 | $60K/sec | $4M | Beyond the reach of any commission |
-| Money Printer | 🖨️ | $400K/sec | $25M | Technically legal |
-
-**Synergy Bonuses:**
-- **Threshold Bonuses**: +10% at 10 owned, +15% at 25, +20% at 50, +25% at 100
-- **Tier Bonuses**: Each higher-tier generator boosts all lower tiers by +1% per owned
-
-### Upgrades
-
-- **Wheel Chance** - Increase wheel win probability (up to 75%)
-- **Wheel Payout** - Multiply wheel winnings (up to 3x)
-- **Slots Chance** - Increase slots win probability (up to 35%)
-- **Slots Payout** - Multiply slots winnings (up to 7x)
-- **Blackjack Payout** - Better blackjack payouts (up to 2x)
-- **Roulette Payout** - Better roulette payouts (up to 3.2x)
-- **Lucky 7s** - Bonus payout when the ball lands on 7/17/27
-- **Golden Pegs** - Multiplies every Plinko bucket (up to +0.5x)
-- **Magnet Bumpers** - Boosts Plinko edge buckets (up to +100%)
-- **Dealer Jinx** - Increases chance the dealer busts
-- **Income Boost** - Multiply all passive income (up to 2x)
-
-### Prestige System
-
-When you've accumulated enough lifetime earnings, you can **prestige** to:
-- **Reset Progress**: Money, generators, and upgrades reset
-- **Gain Multiplier**: +10% permanent income multiplier per prestige
-- **Earn Stars**: Base 5 stars + 1 per prestige level + 1 per $1M lifetime earnings
-- **Unlock Milestones**: First prestige unlocks the interest/banking system
-
-#### Prestige Shop (Spend Stars)
-
-| Perk | Max Level | Effect |
-|------|-----------|--------|
-| Starting Money | 10 | Start with +$50 per level after prestige |
-| Generator Discount | 10 | All generators cost -5% per level |
-| Offline Cap | 5 | Offline earnings cap +2 hours per level |
-| Passive Boost | 20 | Permanent +5% passive income per level |
-
-### Specialization Builds
-
-Choose your casino specialty for strategic bonuses:
-
-| Specialization | Icon | Bonus |
-|----------------|------|-------|
-| Wheel Tycoon | 🎡 | +50% payout on Wheel spins |
-| Slot Mogul | 🎰 | +50% payout on Slots |
-| Card Shark | 🃏 | +50% payout on Blackjack |
-| Roulette Baron | 🎲 | +50% payout on Roulette |
-| Plinko Pro | 🎯 | +50% payout on Plinko drops |
-
-**Strategy**: Focus on one game type for maximum efficiency!
-
-### Milestones
-
-Unlock new mechanics as you progress:
-
-1. **Generator Collector** - Own 10 total generators
-2. **Income Milestone** - Reach $10/sec passive income
-3. **Banking Unlocked** - First prestige (unlocks interest system!)
-4. **Generator Hoarder** - Own 50 total generators
-5. **Millionaire Club** - $1M total lifetime earnings
-6. **Prestige Veteran** - Reach prestige level 3
-
-## 💡 Progression Tips
-
-### Early Game (First Hour)
-1. **Play actively** - Casino games are your main income source
-2. **Buy first generators** - Start with Tip Jar and Penny Slots
-3. **Upgrade odds** - Invest in Wheel Chance and Slots Chance early
-4. **Use bulk buy** - Press `E` in Generator Shop to toggle buy modes
-
-### Mid Game (Building Passive Income)
-1. **Focus on generators** - Passive income will overtake active play
-2. **Hit thresholds** - Buy 10+ of each generator for synergy bonuses
-3. **Unlock achievements** - Each one gives +1% permanent income
-4. **Save for prestige** - Aim for first prestige around $100k lifetime earnings
-
-### Late Game (Prestige & Beyond)
-1. **Prestige strategically** - Wait until you have good lifetime earnings for more stars
-2. **Invest in perks** - Passive Boost and Generator Discount are powerful
-3. **Choose specialization** - Pick one game type and focus on it (+50% bonus!)
-4. **Stack synergies** - Higher-tier generators boost all lower tiers
-5. **Use interest** - Let your bankroll compound with the interest system
-
-### Pro Tips
-- **Offline earnings** cap at 24 hours (+ perk bonuses)
-- **Achievements persist** through prestige - their bonuses stack forever
-- **Specialization** can be changed anytime - experiment to find your style
-- **Milestones** unlock automatically - just keep playing!
-- **Synergies multiply** - 100 Tip Jars + 10 Casino Empires = massive boost!
-
-## 🖥️ Terminal Screenshot
-
-```
-╔══════════════════════════════════════════════════╗
-║     🎰 LUCKY SPIN CASINO 🎰                      ║
-║     ★ ★ ★ ★ ★ ★ ★ ★ ★ ★                         ║
-╠══════════════════════════════════════════════════╣
-║  💰 Balance: $1,234.56  🔥 Income: +$12.50/sec   ║
-║  🎯 Bet: $10.00  ⭐ P2 (1.2x)  🎯 Wheel Tycoon   ║
-║  ✓ Wins: 45  ✗ Losses: 12  🏆 Peak: $5,432.10   ║
-╚══════════════════════════════════════════════════╝
-
-  GAMES
-  ▶ 🎡 Spin the Wheel    (65% chance, 2.5x)
-    🎰 Play Slots        (25% chance, 6.0x)
-    🃏 Blackjack         (payout: 1.8x)
-    🎲 Roulette          (up to 35x payout)
-
-  SHOP
-    🏪 Generator Shop    (passive income)
-    ⬆ Upgrade Shop       (improve odds)
-
-  OPTIONS
-    💵 Change Bet        (current: $10)
-    ⭐ Prestige          (level 2)
-    🎯 Specialization    (Wheel Tycoon)
-    🏆 Achievements      
+```bash
+npm install --no-save --package-lock=false playwright
+npx playwright install chromium
+make test-browser
 ```
 
-## 🐛 Troubleshooting
+The browser checks use a private temporary save and a localhost server. They cover all five games, bets, shops, specialties, reset/cancel, reconnecting, keyboard controls, reduced motion, and desktop/mobile layouts. `PLAYWRIGHT_MODULE` and `CHROMIUM_PATH` can point to an existing installation.
 
-### Symbols not displaying correctly?
+The frontend uses plain HTML, CSS, and JavaScript. The game remains a single C++ executable; Python and Playwright are build/development tools only.
 
-1. Install Noto fonts: `make install-fonts`
-2. Use a terminal with Unicode support (e.g., GNOME Terminal, Konsole, Alacritty)
-3. Run the Unicode test: `make test-unicode`
+## Documentation and contribution
 
-### Game not saving?
+- [Game design and economy](docs/GDD.md)
+- [Gameplay roadmap](docs/GAMEPLAY_IMPROVEMENTS.md)
+- [Generated artwork and prompt](docs/ARTWORK.md)
 
-- Save file location: `${XDG_DATA_HOME:-~/.local/share}/luckyspin/lucky_spin_save.txt`
-- A `.bak` copy of the previous save is kept alongside it
-- Game auto-saves every 30 seconds
-- Manual save: Select "Save Game" from menu
-- Legacy saves in the current directory are migrated automatically on first run
+Bug reports and contributions are welcome. Include your interface, steps to reproduce, and expected behavior. Run the checks relevant to your change before submitting it.
 
-### Colors not showing?
-
-- Ensure your terminal supports ANSI colors
-- Try setting `TERM=xterm-256color`
-
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to:
-- Report bugs
-- Suggest features
-- Submit pull requests
-
-## 📚 Documentation
-
-- **[docs/GDD.md](docs/GDD.md)** - Game Design Document with technical details
-- **[docs/GAMEPLAY_IMPROVEMENTS.md](docs/GAMEPLAY_IMPROVEMENTS.md)** - Roadmap and improvement phases
-
-## 🎮 Menu Structure
-
-```
-Main Menu
-├── GAMES
-│   ├── 🎡 Spin the Wheel
-│   ├── 🎰 Play Slots
-│   ├── 🃏 Blackjack
-│   └── 🎲 Roulette
-├── SHOP
-│   ├── 🏪 Generator Shop (with bulk buy: x1/x10/x25/x100/MAX)
-│   └── ⬆ Upgrade Shop
-└── OPTIONS
-    ├── 💵 Change Bet
-    ├── ⭐ Prestige
-    │   ├── [P] Prestige Now
-    │   └── [S] Prestige Shop (spend stars)
-    ├── 🎯 Specialization (choose your build)
-    ├── 🏆 Achievements (view progress)
-    ├── 💾 Save Game
-    ├── 🔄 Restart Game
-    └── 🚪 Quit Game
-```
-
-## 🎯 Achievement List
-
-| Achievement | Requirement | Reward |
-|-------------|-------------|--------|
-| First Win | Win your first game | +1% income |
-| High Roller | Win $1,000 in a single bet | +1% income |
-| Millionaire | Reach $1,000,000 | +1% income |
-| Lucky Streak | Win 10 games in a row | +1% income |
-| Generator Tycoon | Own 10 of any generator | +1% income |
-| Fully Upgraded | Max out all upgrades | +1% income |
-| First Prestige | Prestige for the first time | +1% income |
-| Prestige Master | Reach prestige level 5 | +1% income |
-| Plinko Jackpot | Land in a Plinko edge bucket | +1% income |
-
-**Total Possible**: 9 achievements = +9% permanent income bonus
-
----
-
-**Have fun and gamble responsibly!** 🎲🍀
+Licensed under [MIT](LICENSE).

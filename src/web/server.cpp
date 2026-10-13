@@ -183,7 +183,7 @@ int serveLoop(int port, const Handler& handler,
     addr.sin_port = 0;
 
     int bound = -1;
-    for (int attempt = 0; attempt <= 20; attempt++) {
+    for (int attempt = 0; attempt <= 20 && port + attempt <= 65535; attempt++) {
         addr.sin_port = htons((unsigned short)(port + attempt));
         if (::bind(listenFd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
             bound = port + attempt;
