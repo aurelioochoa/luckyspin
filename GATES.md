@@ -18,5 +18,5 @@ Scope: Improve both interfaces, fix verified bugs, generate artwork, document th
 - [x] G4: Generated casino artwork is embedded in the GUI and used as the README banner; the README describes actual behavior.
   EVIDENCE: Generated 2172x724 PNG saved at web/assets/casino.png, embedded and fetched through the live API; reviewed real desktop and mobile captures, and verified every local README link and image. Prompt is recorded in docs/ARTWORK.md.
 
-- [ ] G5: The verified commit is on the user's GitHub repository with an accurate About description and topics.
-  EVIDENCE: pending
+- [x] G5: The verified commit is on the user's GitHub repository with an accurate About description and topics.
+  EVIDENCE: Public repository https://github.com/aurelioochoa/luckyspin created with main branch, descriptive About text, and 12 verified topics. GitHub commits/main matched published implementation commit 78e95da6f9f57e37da6a888804342cdee969ec9a; remote README and artwork blob hashes matched local files. All project source, documentation, generated artwork, real screenshots, regression scripts, and CI workflow are included.
